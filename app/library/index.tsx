@@ -227,6 +227,8 @@ export default function LibraryScreen() {
 
   const renderCell = ({ item }: { item: LibraryAsset }) => {
     const duration = durationLabel(item.durationMs);
+    const isVideo = item.mediaType === 'video';
+    const isAudio = item.mediaType === 'audio';
     return (
       <Pressable
         style={{ width: cellSize }}
@@ -242,16 +244,24 @@ export default function LibraryScreen() {
               resizeMode="cover"
             />
           ) : item.thumb.kind === 'skipped' ? (
-            <View style={styles.cellPlaceholder}>
+            // 视频没有预览接口，不能留空白——空白看起来像加载失败。
+            // 给一张明确的占位卡：深底 + 播放图标 + 类型文字，和「照片读失败」在视觉上分开。
+            <View style={styles.videoCard}>
               <SymbolView
-                name={{ ios: 'video', android: 'videocam', web: 'videocam' }}
-                tintColor={colors.textTertiary}
-                size={22}
+                name={{ ios: 'play.rectangle.fill', android: 'movie', web: 'movie' }}
+                tintColor={colors.textOnMedia}
+                size={26}
               />
+              <Text style={styles.videoCardText}>{isVideo ? '视频' : isAudio ? '音频' : '媒体'}</Text>
             </View>
           ) : item.thumb.kind === 'error' ? (
             <View style={styles.cellPlaceholder}>
-              <Text style={styles.cellPlaceholderText}>无法显示</Text>
+              <SymbolView
+                name={{ ios: 'photo.badge.exclamationmark', android: 'broken_image', web: 'broken_image' }}
+                tintColor={colors.textTertiary}
+                size={20}
+              />
+              <Text style={styles.cellPlaceholderText}>无法预览</Text>
             </View>
           ) : (
             <View style={styles.cellPlaceholder}>
@@ -300,6 +310,22 @@ export default function LibraryScreen() {
           已加载 {assets.length} 张 · {pageCount} 批
         </Text>
       </View>
+
+      <Pressable
+        style={styles.entryButton}
+        onPress={() => router.push('/library/dates')}>
+        <View style={styles.entryText}>
+          <Text style={styles.entryTitle}>日期口径验证</Text>
+          <Text style={styles.entryHint}>
+            看每张照片该归到哪一天、依据是什么；决定要不要接坐标反查时区
+          </Text>
+        </View>
+        <SymbolView
+          name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }}
+          tintColor={colors.textTertiary}
+          size={14}
+        />
+      </Pressable>
 
       <Text style={styles.hint}>
         按拍摄时间倒序，每批 {PAGE_SIZE} 张。这一页只读：不写入相册，也不生成到访和故事。
@@ -473,6 +499,15 @@ const styles = StyleSheet.create({
   cellImage: { width: '100%', height: '100%' },
   cellPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.xs },
   cellPlaceholderText: { ...typography.caption2, color: colors.textTertiary },
+  /** 视频/音频占位卡：深色底 + 图标 + 类型文字，和「照片读失败」的浅灰占位区分开 */
+  videoCard: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    backgroundColor: colors.surfaceTranslucentDark,
+  },
+  videoCardText: { ...typography.caption2, color: colors.textOnMedia },
   cellTime: {
     ...typography.caption2,
     color: colors.textPrimary,
@@ -496,6 +531,19 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   summaryText: { ...typography.caption, color: colors.textSecondary },
+  entryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: colors.backgroundGrouped,
+    marginBottom: spacing.sm,
+  },
+  entryText: { flex: 1, gap: 2 },
+  entryTitle: { ...typography.footnote, color: colors.textPrimary, fontWeight: '600' },
+  entryHint: { ...typography.caption2, color: colors.textTertiary, lineHeight: 14 },
   hint: {
     ...typography.caption,
     color: colors.textTertiary,

@@ -243,6 +243,23 @@ export async function enrichPage(
   return next;
 }
 
+/**
+ * 只补定位，不碰缩略图。
+ * 日期口径那页不需要预览图（列表是数据行不是相册格），少一次 getUri 就少一次潜在的原图/iCloud 下载。
+ */
+export async function enrichLocations(
+  assets: LibraryAsset[],
+  options: { onProgress?: (assetId: string, location: LibraryLocation) => void } = {},
+): Promise<LibraryAsset[]> {
+  const next = assets.map((asset) => ({ ...asset }));
+  await mapWithConcurrency(next, ENRICH_CONCURRENCY, async (asset, index) => {
+    const location = await resolveLocation(asset.id);
+    next[index].location = location;
+    options.onProgress?.(asset.id, location);
+  });
+  return next;
+}
+
 export interface AssetDetail {
   id: string;
   info: {
