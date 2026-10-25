@@ -40,14 +40,14 @@ app/
 ├── visit/[visitId].tsx              该次到访的图库
 ├── story/[storyId]/index.tsx        杂志阅读页
 ├── story/[storyId]/edit.tsx         故事编辑页
-└── settings.tsx                     设置（原型状态说明）
+└── settings.tsx                     设置（原型状态、存档范围、重置存档）
 src/
 ├── domain/types.ts                  全局类型（唯一真源）
 ├── domain/timeline.ts               时间刻度与时间窗口纯函数
 ├── domain/clustering.ts             地图聚合：像素距离分组 + 点击策略（纯函数）
 ├── data/mock*.ts                    示例地点 / 到访 / 媒体 / 故事
 ├── data/mediaSource.ts              mock:<slug> → 本地图片 require 表
-├── store/appStore.ts                Zustand 单一 store
+├── store/appStore.ts                Zustand 单一 store + AsyncStorage 存档
 ├── store/selectors.ts               派生数据纯函数
 ├── components/                      map / timeline / place / story / common 组件
 ├── theme/                           颜色、间距、字体 token
@@ -66,6 +66,26 @@ src/
 - [x] M6 合并 / 拆分 / 删除的 UI 入口
 - [x] M6b 地图标记聚合 + 分不开时的地点列表 + 入场动效
 - [x] M7 按 spec §12 验收清单回归（完整流程 / 小屏遮挡 / 状态一致 / 重启行为）
+- [x] M8 本地持久化（只存故事层，重启保留编辑 / 合并 / 拆分 / 删除）
+
+## 本地持久化
+
+**只存 `stories`**，`places` / `visits` / `media` 每次从示例数据重建。原因是原型里用户能改的只有故事这一层；
+而 `MediaAsset.uri` 现在是 `mock:<slug>` 键，跟着素材表走，存下来反而会在改名后变空图。接真实相册时
+这三层才需要一起存，那时 uri 是真路径，语义也变了。
+
+- 存档键 `xin-camera-store`，版本 `STORE_VERSION = 1`，改结构时版本 +1 并在 `migrate` 里补一条。
+- **进存档的**：`stories` 全量，含 `isDeleted`、`mergedFromStoryIds`、`mergeSnapshot`。
+  `mergeSnapshot` 必须一起存——不然重启后合集还在但拆不回去了。
+- **不进存档的**：`timeRange`、`selectedPlaceId`、`selectedVisitId`、`lastMergedStoryId`。
+  这些是瞬态 UI 状态，重启回到"最近一次回忆所在月份"比恢复上次拖到的位置更符合预期。
+- **结构校验**：`merge` 时逐条过 `isValidStory`（id / title / mediaIds / placeIds / startAt 必须齐）；
+  一条都留不下就当存档坏了，整体回退示例数据——空相册比丢一次编辑更糟。
+- **启动不闪**：`app/_layout.tsx` 等 `persist.hasHydrated()` 再渲染路由树，另设 1.2s 兜底，
+  避免"存档还没读完先按示例数据画一帧"导致改过的标题闪回旧值。
+- **存不了也不崩**：`safeStorage` 把 AsyncStorage 的读写都包了 try/catch，原生模块缺失时降级为内存态
+  并打一条 warn，不让启动流程抛错。
+- 重置入口在设置页底部（`resetToMock`，带二次确认），重置后存档立刻被示例数据覆盖。
 
 ## 地图聚合
 
@@ -126,15 +146,20 @@ src/
 
 ## 状态机断言
 
-`store` 与 `selectors` 的合并 / 拆分 / 删除 / 恢复语义有 91 条断言，直接跑真实 store
-（zustand 不依赖 React 渲染），覆盖嵌套合并、重复合并、删除合集后恢复、连续操作、跨页一致、
-时段与聚合一致。运行方式需要 Node 22 的 `--experimental-strip-types` 加一个把 `@/` 别名和
-`data/mediaSource`（里面有 `require(*.jpg)`）替换掉的 loader；脚本不进仓库，属于一次性校验工具。
+`store` 与 `selectors` 的合并 / 拆分 / 删除 / 恢复语义有 91 条断言，档案层另有 31 条，
+直接跑真实 store（zustand 不依赖 React 渲染），覆盖嵌套合并、重复合并、删除合集后恢复、连续操作、
+跨页一致、时段与聚合一致；存档侧覆盖 `partialize` 范围、写盘内容、重启 round-trip、脏存档过滤、
+版本迁移、重置、以及"合集快照跟着存档走"。运行方式需要 Node 22 的 `--experimental-strip-types`
+加一个 loader：把 `@/` 别名补成真实路径、把 `data/mediaSource`（内含 `require(*.jpg)`）和
+`@react-native-async-storage/async-storage`（换成内存 Map）替换掉。
+脚本不进仓库，属于一次性校验工具。
 
 ## 已知限制
 
-- **全部内存态**：编辑、合并、删除都只存在于内存，重启 App（以及开发期 Fast Refresh）会回到示例数据。
-  设置页已把这条标成「本地持久化 · 未接入」。
+- 持久化**只覆盖故事层**：`places` / `visits` / `media` 每次从示例数据重建。好处是改素材不影响存档，
+  代价是接真实相册时必须一起改存档结构（版本 +1 + 迁移），不能直接沿用 v1 的存档。
+- 存档是**全量覆盖写**，没有节流。故事多到几百本时每次编辑都会重写一遍完整 JSON；
+  当前示例规模无所谓，量级上来要改成只写变动或加 debounce。
 - 合并只有一步到位的「合并」，没有二次确认，也没有 undo 栈；误合并要到阅读页拆开。
 - 选中地点后没有主动收起底部卡片的入口（点另一个地点或进详情才会变）。
 - 聚合半径固定 52px，不随标记疏密自适应；地点重合时只给列表，不做"蜘蛛网"散开。

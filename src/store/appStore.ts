@@ -1,4 +1,8 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
+import type { StateCreator } from 'zustand';
+import { createJSONStorage, persist } from 'zustand/middleware';
+import type { StateStorage } from 'zustand/middleware';
 
 import { mockMedia, mockPlaces, mockStories, mockVisits } from '@/src/data';
 import { makeMonthRange } from '@/src/domain/timeline';
@@ -16,7 +20,15 @@ import { formatDay } from '@/src/utils/datetime';
 /**
  * 全局唯一 store（规格 §8）。
  * 地图页和故事页都必须从这里读，不允许各自维护副本。
- * 原型阶段纯内存，不接持久化；需要验证重启保留时再加 AsyncStorage。
+ *
+ * 持久化策略（v1）：**只持久化 `stories`**。
+ * 用户在原型里能改的只有故事这一层——编辑、合并、拆分、删除、恢复全落在 `Story` 上；
+ * `places` / `visits` / `media` 是示例数据派生的，每次都从 mock 重建。
+ * 这样做的直接好处是：换素材、改 mock 结构不会和旧存档打架，也不会因为
+ * 存了 `mock:<slug>` 键而在素材改名后出现空图。接真实相册后再把三层一起存。
+ *
+ * 没进 `partialize` 的字段（`timeRange` / 选中项 / `lastMergedStoryId`）都是瞬态 UI 状态，
+ * 重启回到「最近一次回忆所在月份」比恢复上次拖到的位置更符合预期。
  */
 
 interface AppState {
@@ -57,6 +69,8 @@ interface AppActions {
   splitStory: (storyId: string) => string[];
   deleteStory: (storyId: string) => void;
   restoreStory: (storyId: string) => void;
+  /** 丢掉本地存档，回到示例数据（设置页用） */
+  resetToMock: () => void;
 }
 
 const dedupe = <T,>(items: T[]): T[] => Array.from(new Set(items));
@@ -121,6 +135,28 @@ const newestStory = [...mockStories]
 /** 初始视野：最近一次回忆所在的月份（规格 §5.2） */
 const initialRange = makeMonthRange(newestStory?.startAt ?? '2026-10-12T12:00:00+08:00');
 
+/** 存档键与版本。改存档结构时版本 +1，并在 `migrate` 里补一条迁移。 */
+export const STORE_KEY = 'xin-camera-store';
+export const STORE_VERSION = 1;
+
+/**
+ * 存档结构校验。
+ * 旧版本存档、手改过的 JSON、字段缺失都可能进来，这一层不合格就整体丢弃回退示例数据——
+ * 宁可丢一次编辑，也不要让页面读到半截对象然后白屏。
+ */
+function isValidStory(value: unknown): value is Story {
+  if (!value || typeof value !== 'object') return false;
+  const s = value as Partial<Story>;
+  return (
+    typeof s.id === 'string' &&
+    typeof s.title === 'string' &&
+    Array.isArray(s.mediaIds) &&
+    Array.isArray(s.placeIds) &&
+    typeof s.startAt === 'string' &&
+    Number.isFinite(new Date(s.startAt).getTime())
+  );
+}
+
 /**
  * 合集 id：时间戳 + 自增序号。
  * 只用 Date.now() 不保险——同一毫秒内连续合并两次会生成同一个 id，
@@ -136,7 +172,7 @@ function nextMergeId(stories: Story[]): string {
   return id;
 }
 
-export const useAppStore = create<AppState & AppActions>((set, get) => ({
+const createAppState: StateCreator<AppState & AppActions> = (set, get) => ({
   places: mockPlaces,
   visits: mockVisits,
   media: mockMedia,
@@ -321,4 +357,86 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
         s.id === storyId ? { ...s, isDeleted: false, updatedAt: nowISO() } : s,
       ),
     })),
-}));
+
+  resetToMock: () =>
+    set({
+      // 深拷贝：存档对象一旦和模块常量共享引用，后续 patch 会把示例数据一起改掉，
+      // 表现是"重置之后看到的还是上次改过的标题"
+      stories: JSON.parse(JSON.stringify(mockStories)) as Story[],
+      timeRange: initialRange,
+      selectedPlaceId: null,
+      selectedVisitId: null,
+      lastMergedStoryId: null,
+    }),
+});
+
+/**
+ * AsyncStorage 的容错包装。
+ * 万一运行环境里没有这个原生模块（换了宿主、Expo Go 版本不匹配），
+ * 存取失败只降级成内存态，不能让启动流程抛错——原型不能因为存不了档就打不开。
+ */
+let storageWarned = false;
+function warnStorageUnavailable(error: unknown) {
+  if (storageWarned) return;
+  storageWarned = true;
+  console.warn('[store] 本地存储不可用，本次运行不保存编辑结果', error);
+}
+
+const safeStorage: StateStorage = {
+  getItem: async (name) => {
+    try {
+      return await AsyncStorage.getItem(name);
+    } catch (error) {
+      warnStorageUnavailable(error);
+      return null;
+    }
+  },
+  setItem: async (name, value) => {
+    try {
+      await AsyncStorage.setItem(name, value);
+    } catch (error) {
+      warnStorageUnavailable(error);
+    }
+  },
+  removeItem: async (name) => {
+    try {
+      await AsyncStorage.removeItem(name);
+    } catch (error) {
+      warnStorageUnavailable(error);
+    }
+  },
+};
+
+/**
+ * 存档层。只写 `stories`（原因见文件头），其余字段在 rehydrate 时由初始值补齐。
+ * `merge` 里做结构校验，存档不合格就整体回退示例数据。
+ */
+export const useAppStore = create<AppState & AppActions>()(
+  persist(createAppState, {
+    name: STORE_KEY,
+    version: STORE_VERSION,
+    storage: createJSONStorage(() => safeStorage),
+    partialize: (state) => ({ stories: state.stories }),
+    merge: (persisted, current) => {
+      const archive = persisted as { stories?: unknown } | undefined;
+      const stories = Array.isArray(archive?.stories)
+        ? archive.stories.filter(isValidStory)
+        : [];
+      // 一条都留不下就当存档不可用：空相册比丢一次编辑更糟，直接回示例数据
+      return stories.length > 0 ? { ...current, stories } : current;
+    },
+    migrate: (persisted, version) => {
+      // v1 是第一个带版本号的存档；更早的没有 version 字段，结构一致，直接接受
+      if (version < 1) {
+        const archive = persisted as { stories?: unknown } | undefined;
+        return Array.isArray(archive?.stories) ? { stories: archive.stories } : {};
+      }
+      return persisted as Partial<AppState & AppActions>;
+    },
+    onRehydrateStorage: () => (_state, error) => {
+      if (error) {
+        console.warn('[store] 读取本地存档失败，本次回到示例数据', error);
+      }
+    },
+  }),
+);
