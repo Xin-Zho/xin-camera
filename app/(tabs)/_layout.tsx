@@ -1,66 +1,50 @@
+import { Tabs } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { Link, Tabs } from 'expo-router';
-import { Platform, Pressable } from 'react-native';
 
-import Colors from '@/constants/Colors';
-import { useColorScheme } from '@/components/useColorScheme';
-import { useClientOnlyValue } from '@/components/useClientOnlyValue';
+import { colors, typography } from '@/src/theme';
+
+export const unstable_settings = {
+  // SDK 58 起 initialRouteName 已弃用，改叫 anchor
+  anchor: 'map',
+};
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
   return (
     <Tabs
+      // 配合 anchor：非 stack 导航要回到 anchor 必须是 initialRoute
+      backBehavior="initialRoute"
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme].tint,
-        // Disable the static render of the header on web
-        // to prevent a hydration error in React Navigation v6.
-        headerShown: useClientOnlyValue(false, true),
+        headerShown: false,
+        tabBarActiveTintColor: colors.textPrimary,
+        tabBarInactiveTintColor: colors.textTertiary,
+        tabBarLabelStyle: { ...typography.caption2, letterSpacing: 0.2 },
+        tabBarStyle: {
+          backgroundColor: colors.surface,
+          borderTopColor: colors.separator,
+        },
       }}>
       <Tabs.Screen
-        name="index"
+        name="map"
         options={{
-          title: 'Tab One',
+          title: '地图',
           tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'chevron.left.forwardslash.chevron.right',
-                android: 'code',
-                web: 'code',
-              }}
-              tintColor={color}
-              size={28}
-            />
-          ),
-          headerRight: () => (
-            <Link href="/modal" asChild>
-              <Pressable style={{ marginRight: 15 }}>
-                {({ pressed }) => (
-                  <SymbolView
-                    name={{ ios: 'info.circle', android: 'info', web: 'info' }}
-                    size={25}
-                    tintColor={Colors[colorScheme].text}
-                    style={{ opacity: pressed ? 0.5 : 1 }}
-                  />
-                )}
-              </Pressable>
-            </Link>
+            <SymbolView name={{ ios: 'map', android: 'map', web: 'map' }} tintColor={color} size={26} />
           ),
         }}
       />
       <Tabs.Screen
-        name="two"
+        name="stories"
         options={{
-          title: 'Tab Two',
+          title: '故事',
           tabBarIcon: ({ color }) => (
             <SymbolView
               name={{
-                ios: 'chevron.left.forwardslash.chevron.right',
-                android: 'code',
-                web: 'code',
+                ios: 'rectangle.stack',
+                android: 'collections_bookmark',
+                web: 'collections_bookmark',
               }}
               tintColor={color}
-              size={28}
+              size={26}
             />
           ),
         }}

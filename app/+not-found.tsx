@@ -1,17 +1,17 @@
 import { Link, Stack } from 'expo-router';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
-import { Text, View } from '@/components/Themed';
+import { colors, spacing, typography } from '@/src/theme';
 
 export default function NotFoundScreen() {
   return (
     <>
-      <Stack.Screen options={{ title: 'Oops!' }} />
+      <Stack.Screen options={{ title: '页面不存在' }} />
       <View style={styles.container}>
-        <Text style={styles.title}>This screen doesn't exist.</Text>
-
-        <Link href="/" style={styles.link}>
-          <Text style={styles.linkText}>Go to home screen!</Text>
+        <Text style={styles.title}>这里什么都没有</Text>
+        <Text style={styles.hint}>可能是走了条不存在的路。</Text>
+        <Link href="/(tabs)/map" style={styles.link}>
+          <Text style={styles.linkText}>回到地图</Text>
         </Link>
       </View>
     </>
@@ -23,18 +23,12 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 20,
+    padding: spacing.xxl,
+    backgroundColor: colors.background,
+    gap: spacing.xs,
   },
-  title: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  link: {
-    marginTop: 15,
-    paddingVertical: 15,
-  },
-  linkText: {
-    fontSize: 14,
-    color: '#2e78b7',
-  },
+  title: { ...typography.title2, color: colors.textPrimary },
+  hint: { ...typography.footnote, color: colors.textSecondary },
+  link: { marginTop: spacing.xl, paddingVertical: spacing.md },
+  linkText: { ...typography.callout, color: colors.accent },
 });
