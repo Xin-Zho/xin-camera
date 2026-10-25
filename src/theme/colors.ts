@@ -30,6 +30,10 @@ export const colors = {
   videoBadge: 'rgba(0, 0, 0, 0.62)',
 
   danger: '#D93A3A',
+  dangerMuted: 'rgba(217, 58, 58, 0.10)',
+  /** 提醒态：存档损坏、限量授权这类"能用但要知情"的状态 */
+  warning: '#A05A00',
+  warningMuted: 'rgba(200, 140, 30, 0.14)',
 
   /** 叠在照片上的文字需要渐变遮罩 */
   mediaScrimTop: 'rgba(0, 0, 0, 0)',

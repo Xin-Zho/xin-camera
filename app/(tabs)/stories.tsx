@@ -1,4 +1,5 @@
 import { useRouter } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
 import { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -82,13 +83,30 @@ export default function StoriesScreen() {
         showsVerticalScrollIndicator={false}>
         <View style={styles.headerRow}>
           <Text style={styles.screenTitle}>故事</Text>
-          {active.length > 0 || selecting ? (
-            <Pressable
-              onPress={() => (selecting ? exitSelection() : enterSelection())}
-              hitSlop={10}>
-              <Text style={styles.selectToggle}>{selecting ? '取消' : '选择'}</Text>
-            </Pressable>
-          ) : null}
+          <View style={styles.headerActions}>
+            {/* 真实相册的独立入口：和示例数据那条线完全分开，进去只读 */}
+            {selecting ? null : (
+              <Pressable
+                onPress={() => router.push('/library')}
+                hitSlop={8}
+                style={styles.libraryPill}
+                accessibilityLabel="打开真实相册（只读实验）">
+                <SymbolView
+                  name={{ ios: 'photo.on.rectangle', android: 'photo_library', web: 'photo_library' }}
+                  tintColor={colors.textSecondary}
+                  size={14}
+                />
+                <Text style={styles.libraryPillText}>相册</Text>
+              </Pressable>
+            )}
+            {active.length > 0 || selecting ? (
+              <Pressable
+                onPress={() => (selecting ? exitSelection() : enterSelection())}
+                hitSlop={10}>
+                <Text style={styles.selectToggle}>{selecting ? '取消' : '选择'}</Text>
+              </Pressable>
+            ) : null}
+          </View>
         </View>
         <Text style={styles.screenSub}>
           {selecting
@@ -193,6 +211,17 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   screenTitle: { ...typography.largeTitle, color: colors.textPrimary },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  libraryPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.pill,
+    backgroundColor: colors.backgroundGrouped,
+  },
+  libraryPillText: { ...typography.caption, color: colors.textSecondary },
   selectToggle: { ...typography.callout, color: colors.accent, fontWeight: '600' },
   screenSub: {
     ...typography.footnote,

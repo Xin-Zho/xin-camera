@@ -74,6 +74,10 @@ export default function RootLayout() {
             <Stack.Screen name="visit/[visitId]" />
             <Stack.Screen name="story/[storyId]/index" />
             <Stack.Screen name="story/[storyId]/edit" />
+            {/* 真实相册是独立的一条线：不读写 store，删掉这两个 Screen 不影响示例流程 */}
+            <Stack.Screen name="library/index" />
+            <Stack.Screen name="library/inspect" />
+            <Stack.Screen name="quarantine" />
             <Stack.Screen
               name="settings"
               options={{

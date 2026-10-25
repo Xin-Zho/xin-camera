@@ -26,6 +26,7 @@ Android / iOS / Web 之外的平台没有验证过，Web 上地图不可用（re
 
 - `docs/prototype-spec.md` —— 第一阶段统一交接规格（产品范围、数据模型、验收标准）
 - `docs/v1-acceptance.md` —— 第一版验收记录（逐条结果、修复清单、遗留与原型限制、待定口径）
+- `docs/v2-photo-library.md` —— 真实相册读取的能力矩阵与事实核对（时间单位、时区、分页、权限）
 - `AGENTS.md` —— 多 agent 协作约定（权威文件、分工边界、版本策略）
 
 ## 目录
@@ -40,14 +41,23 @@ app/
 ├── visit/[visitId].tsx              该次到访的图库
 ├── story/[storyId]/index.tsx        杂志阅读页
 ├── story/[storyId]/edit.tsx         故事编辑页
-└── settings.tsx                     设置（原型状态、存档范围、重置存档）
+├── library/index.tsx                真实相册（只读实验，独立入口）
+├── library/inspect.tsx              单个资产的原始字段与 EXIF
+├── quarantine.tsx                   隔离存档查看
+└── settings.tsx                     设置（存档健康、相册入口、重置存档）
 src/
 ├── domain/types.ts                  全局类型（唯一真源）
 ├── domain/timeline.ts               时间刻度与时间窗口纯函数
 ├── domain/clustering.ts             地图聚合：像素距离分组 + 点击策略（纯函数）
+├── library/types.ts                 相册读取层的类型（只描述原生给了什么）
+├── library/epoch.ts                 时间戳单位判定与展开（纯函数）
+├── library/exif.ts                  EXIF 里时间/时区字段的提取（纯函数）
+├── library/concurrency.ts           并发受限的批量任务
+├── library/reader.ts                相册权限、分页查询、逐条补缩略图与定位
 ├── data/mock*.ts                    示例地点 / 到访 / 媒体 / 故事
 ├── data/mediaSource.ts              mock:<slug> → 本地图片 require 表
 ├── store/appStore.ts                Zustand 单一 store + AsyncStorage 存档
+├── store/storage.ts                 存档健康状态与隔离存档
 ├── store/selectors.ts               派生数据纯函数
 ├── components/                      map / timeline / place / story / common 组件
 ├── theme/                           颜色、间距、字体 token
@@ -67,6 +77,7 @@ src/
 - [x] M6b 地图标记聚合 + 分不开时的地点列表 + 入场动效
 - [x] M7 按 spec §12 验收清单回归（完整流程 / 小屏遮挡 / 状态一致 / 重启行为）
 - [x] M8 本地持久化（只存故事层，重启保留编辑 / 合并 / 拆分 / 删除）
+- [x] M9 真实相册读取验证（权限 / 分页 / 原始时间与定位，不生成到访和故事）
 
 ## 本地持久化
 
@@ -86,6 +97,36 @@ src/
 - **存不了也不崩**：`safeStorage` 把 AsyncStorage 的读写都包了 try/catch，原生模块缺失时降级为内存态
   并打一条 warn，不让启动流程抛错。
 - 重置入口在设置页底部（`resetToMock`，带二次确认），重置后存档立刻被示例数据覆盖。
+
+### 存档坏了怎么办
+
+两种失败要分开，因为用户能做的事不一样：
+
+| 情况 | 判定位置 | 界面 | 数据 |
+|---|---|---|---|
+| 存储不可用（原生模块缺失等） | `safeStorage` 抛错 / 读取失败 | 设置页红条：**当前修改仅在本次运行有效** | 无法保存，退出即回到示例数据 |
+| 存档不是合法 JSON | `safeStorage.getItem` 预解析失败 | 设置页黄条 + 「查看备份」 | 原样抄到 `xin-camera-store__quarantine`，本次用示例数据 |
+| JSON 合法但一条可用故事都没有 | `merge` 校验后为空 | 同上 | 同样备份原始文本 |
+
+关键点：**坏存档不能被示例数据直接覆盖**。如果什么都不做，zustand 回退到示例数据后，
+下一帧 `persist` 就会把整份坏存档写成新的示例 JSON，用户攒的标题和合并记录彻底没了。
+所以 `getItem` 在把 `null` 返回给 persist 之前先抄一份到隔离区，隔离区只有 `quarantine.tsx`
+页面的「删除这份备份」能清掉。备份存的是**原始文本**，不是解析后的对象——后者已经是"我们以为它是什么"。
+
+## 真实相册读取（只读实验）
+
+独立入口（故事页右上角「相册」/ 设置页），和示例数据那条线完全隔离：不写 store、不生成到访和故事、
+不修改相册。删掉 `app/library/` 和 `src/library/` 不影响主流程。
+
+- 用 SDK 58 的**类式 API**（`Query` / `Asset`）。`expo-media-library/legacy` 从默认入口导入会**运行期抛错**，不是警告。
+- 列表页一次拿全的只有「时间和类型」：`Query.exeForMetadata()`。**定位和缩略图必须逐条补**
+  （`Asset.getLocation()` / `Asset.getUri()`），所以页大小固定 24，第一页自动读、后续每页用户点。
+- **`creationTime` 是毫秒，但类型注释写的是秒。** iOS 实现 `Date.millisecondsSince1970` 才是真的。
+  处理方式是原值照存 + 按数值量级判定单位（`src/library/epoch.ts`），界面把原始值和判定结果一起显示。
+- **相册 API 不提供拍摄地时区。** `getLocation()` 只有经纬度；只有 EXIF 里可能残留
+  `OffsetTimeOriginal`，且读取代价高（导出临时文件 + 可能触发 iCloud 下载）。详见 `docs/v2-photo-library.md`。
+- 权限分六档：未决 / 全部 / 部分 / 已授权但宿主不区分范围 / 拒绝 / **原生模块缺失**。
+  最后两档在界面上是两回事，不能混成"没有权限"。
 
 ## 地图聚合
 
@@ -146,12 +187,17 @@ src/
 
 ## 状态机断言
 
-`store` 与 `selectors` 的合并 / 拆分 / 删除 / 恢复语义有 91 条断言，档案层另有 31 条，
+`store` 与 `selectors` 的合并 / 拆分 / 删除 / 恢复语义有 91 条断言，存档层另有 31 条，
 直接跑真实 store（zustand 不依赖 React 渲染），覆盖嵌套合并、重复合并、删除合集后恢复、连续操作、
 跨页一致、时段与聚合一致；存档侧覆盖 `partialize` 范围、写盘内容、重启 round-trip、脏存档过滤、
-版本迁移、重置、以及"合集快照跟着存档走"。运行方式需要 Node 22 的 `--experimental-strip-types`
-加一个 loader：把 `@/` 别名补成真实路径、把 `data/mediaSource`（内含 `require(*.jpg)`）和
-`@react-native-async-storage/async-storage`（换成内存 Map）替换掉。
+版本迁移、重置、以及"合集快照跟着存档走"。相册读取层另有 84 条，覆盖时间单位判定的上/下界与
+"毫秒和秒指向同一时刻"、时区偏移格式化、缺失与无法解析的文案、EXIF 时间字段的提取与深度上限、
+并发上限与结果顺序、权限归一（宿主不给范围时**不猜 `all`**）、宿主模块缺失的判定、
+以及存档问题文案与重置语义。
+
+运行方式需要 Node 22 的 `--experimental-strip-types` 加一个 loader：把 `@/` 别名补成真实路径、
+把 `data/mediaSource`（内含 `require(*.jpg)`）、`@react-native-async-storage/async-storage`
+（换成内存 Map）和 `expo`（`requireOptionalNativeModule` 返回 null）替换掉。
 脚本不进仓库，属于一次性校验工具。
 
 ## 已知限制
@@ -173,6 +219,18 @@ src/
 - 标记入场动效依赖 `Marker` 内部视图动画。react-native-maps 是把标记栅格化成图片显示的，
   真机上可能看不到动画（此时会退化成直接出现，不会停在半透明或缩小状态）。
 - iPad 分屏未验证：`VisitCardStack` 和到访图库的格子尺寸用的是模块级 `Dimensions` 常量。
+
+真实相册那一侧的限制（这一轮只到"能读"，还没进主流程）：
+
+- **缩略图会触发 iCloud 下载。** `Asset.getUri()` 的 `isNetworkAccessAllowed` 是 `true`，
+  iCloud 上的资产第一次进列表会真的开始下载原图。现在只靠页大小 24 + 并发 3 + 手动翻页压着。
+- **列表显示的是原尺寸图。** 新版 API 没有缩略图接口，只能把原图 URI 交给 `<Image>` 让它降采样，
+  24 张 48MP 的图同时解码仍有内存压力。后续要在原生侧按 `targetSize` 出缩略图。
+- **视频没有缩略图**，只给类型角标和时长。
+- **`Query` 没有 count 接口**，界面只显示「已加载 N 张」，不显示总数。
+- **没有定位的照片归属没处理**：读取页面只标注「无定位」，还没决定它们该进哪个地点。
+- **Expo Go 里用的是它自己的权限文案**，`app.json` 里配的 `photosPermission` 只在自建构建生效。
+
 - **时间只按设备本地时区拆年月日。** 示例数据钉在 `+08:00`，展示层却直接走 `Date.getMonth()` /
   `getDate()` / `getHours()` 这些**本地**读法，所以设备时区不是 +08:00 时**会跨日**：
   `2026-09-28T06:44+08:00` 在 UTC-8 的设备上会显示成 9 月 27 日。列表的「今天 / 昨天」也拿
@@ -195,3 +253,15 @@ src/
 倾向是拍摄地日期，理由是这东西卖的是「回味当时」，日期错一天是硬伤；但这要等接入真实相册、
 确认 `PHAsset` 是否稳定给出拍摄地时区之后再定。接入时先只验证权限、拍摄时间、定位三样，
 把日期归属的口径实验单独做一轮，不要塞进同一批改动。
+
+**2026-10-26 补充（已核对，结论是坏消息）**：相册 API **不提供**拍摄地时区。
+`Asset.getLocation()` 只给经纬度；`creationTime` 是绝对时刻，时区信息在它里面本来就不存在；
+唯一可能残留线索的是 EXIF 的 `OffsetTimeOriginal`，而截图和社交软件保存的图片基本没有，
+读取还要把原图导一遍。所以「拍摄地日期」这个口径**没有可靠的系统级输入**，
+口径实验要先解决"拿不到时区时退化成什么"，可选退路：
+
+1. 有 EXIF 偏移就用它，没有就退回设备时区（明确标注"这条按设备时区算"）
+2. 用定位坐标反查 IANA 时区（需要离线时区边界数据，另算一笔依赖）
+3. 干脆统一按设备时区，接受"回国后旧照片前移一天"
+
+这三条要在口径实验里用真实相册样本量一遍命中率再选，不要先写死在代码里。

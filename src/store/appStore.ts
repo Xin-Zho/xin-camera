@@ -15,6 +15,8 @@ import type {
   TimeRange,
   Visit,
 } from '@/src/domain/types';
+import type { StorageIssue } from '@/src/store/storage';
+import { writeQuarantine } from '@/src/store/storage';
 import { formatDay } from '@/src/utils/datetime';
 
 /**
@@ -42,6 +44,11 @@ interface AppState {
   selectedVisitId: string | null;
   /** 最近一次合并产生的故事，用于列表里提示"可拆分" */
   lastMergedStoryId: string | null;
+  /**
+   * 存档健康状态。不持久化，每次启动由 rehydrate 过程判定。
+   * 设置页据此区分「能保存」和「只在本次运行有效」——这两件事对用户的含义完全不同。
+   */
+  storageIssue: StorageIssue;
 }
 
 interface AppActions {
@@ -181,6 +188,7 @@ const createAppState: StateCreator<AppState & AppActions> = (set, get) => ({
   selectedPlaceId: null,
   selectedVisitId: null,
   lastMergedStoryId: null,
+  storageIssue: { kind: 'none' },
 
   setSelectedTimeRange: (range) => set({ timeRange: range }),
 
@@ -367,6 +375,8 @@ const createAppState: StateCreator<AppState & AppActions> = (set, get) => ({
       selectedPlaceId: null,
       selectedVisitId: null,
       lastMergedStoryId: null,
+      // 重置后存档是干净的；存储本身不可用则保持原样，别把这个问题也"重置"掉
+      storageIssue: get().storageIssue.kind === 'unavailable' ? get().storageIssue : { kind: 'none' },
     }),
 });
 
@@ -382,12 +392,48 @@ function warnStorageUnavailable(error: unknown) {
   console.warn('[store] 本地存储不可用，本次运行不保存编辑结果', error);
 }
 
+function messageOf(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return typeof error === 'string' ? error : JSON.stringify(error);
+}
+
+/**
+ * 存档健康状态的中转站。
+ *
+ * rehydrate 发生在 store 创建之后、React 订阅之前，`merge` 里又拿不到 `set`，
+ * 所以先记在模块变量上，等 `onRehydrateStorage` 回来时一次性写进 state。
+ */
+let pendingIssue: StorageIssue = { kind: 'none' };
+/** getItem 读到的原始文本，`merge` 发现结构不对时用它做隔离备份 */
+let lastRawArchive: string | null = null;
+
 const safeStorage: StateStorage = {
   getItem: async (name) => {
     try {
-      return await AsyncStorage.getItem(name);
+      const raw = await AsyncStorage.getItem(name);
+      lastRawArchive = raw;
+      if (raw === null) return null;
+      // 先自己验一次 JSON 能不能解析。
+      // 直接抛给 zustand 的话，它只会回退示例数据，而下一帧 persist 就会把这份坏存档覆盖掉，
+      // 用户攒的标题/合并/删除记录就彻底没了。所以先抄一份到隔离区，再返回 null。
+      try {
+        JSON.parse(raw);
+      } catch (error) {
+        const bytes = await writeQuarantine(raw, name, `JSON 解析失败：${messageOf(error)}`);
+        pendingIssue =
+          bytes === null
+            ? { kind: 'unavailable', detail: `存档损坏且备份失败：${messageOf(error)}` }
+            : {
+                kind: 'archive-invalid',
+                detail: messageOf(error),
+                bytes,
+              };
+        return null;
+      }
+      return raw;
     } catch (error) {
       warnStorageUnavailable(error);
+      pendingIssue = { kind: 'unavailable', detail: messageOf(error) };
       return null;
     }
   },
@@ -396,6 +442,7 @@ const safeStorage: StateStorage = {
       await AsyncStorage.setItem(name, value);
     } catch (error) {
       warnStorageUnavailable(error);
+      pendingIssue = { kind: 'unavailable', detail: messageOf(error) };
     }
   },
   removeItem: async (name) => {
@@ -423,7 +470,20 @@ export const useAppStore = create<AppState & AppActions>()(
         ? archive.stories.filter(isValidStory)
         : [];
       // 一条都留不下就当存档不可用：空相册比丢一次编辑更糟，直接回示例数据
-      return stories.length > 0 ? { ...current, stories } : current;
+      if (stories.length > 0) return { ...current, stories };
+
+      // 存档确实在、确实有记录，但一条都没通过校验：这不是"没有存档"，是"存档坏了"。
+      // 原样备份一份再回示例数据，否则下一次写入就把它盖掉了。
+      if (Array.isArray(archive?.stories) && archive.stories.length > 0) {
+        const raw = lastRawArchive ?? JSON.stringify(archive);
+        pendingIssue = {
+          kind: 'archive-empty',
+          detail: `存档里 ${archive.stories.length} 条故事无一通过结构校验`,
+          bytes: raw.length,
+        };
+        void writeQuarantine(raw, STORE_KEY, '存档结构校验未通过');
+      }
+      return current;
     },
     migrate: (persisted, version) => {
       // v1 是第一个带版本号的存档；更早的没有 version 字段，结构一致，直接接受
@@ -436,6 +496,13 @@ export const useAppStore = create<AppState & AppActions>()(
     onRehydrateStorage: () => (_state, error) => {
       if (error) {
         console.warn('[store] 读取本地存档失败，本次回到示例数据', error);
+        // JSON 解析失败在 getItem 里已经定性并备份过了，这里只兜底它没覆盖到的异常
+        if (pendingIssue.kind === 'none') {
+          pendingIssue = { kind: 'unavailable', detail: messageOf(error) };
+        }
+      }
+      if (pendingIssue.kind !== 'none') {
+        useAppStore.setState({ storageIssue: pendingIssue });
       }
     },
   }),

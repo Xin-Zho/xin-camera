@@ -33,6 +33,15 @@
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "读取相册照片的拍摄时间、类型和位置，用来生成回忆地图。只读，不上传。",
+          "savePhotosPermission": "保存编辑后的照片到相册。",
+          "isAccessMediaLocationEnabled": true,
+          "granularPermissions": ["photo", "video"]
+        }
       ]
     ],
     "experiments": {
