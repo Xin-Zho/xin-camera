@@ -123,6 +123,10 @@ src/
 **从图库移除照片**（`visit/[visitId].tsx`）：右上角「选择」或长按照片进入选择模式 → 多选 →
 「从回忆相册移除」。确认弹窗写明**只在本 App 内隐藏，iPhone 系统相册的原图不会被删除**。
 
+**移空自动删除**（真机验收后确认的产品逻辑）：故事的照片被全部移除后，故事自动进「已删除」
+（打 `deletedByEmptying` 标记）；恢复其中任何一张照片，故事自动回来。
+手动删除/手动恢复一律清标记——手动删除后恢复照片不复活故事。
+
 只写 `MediaAsset.removedAt`，**不动** `story.mediaIds` / `visit.mediaIds` / `place.mediaIds`：
 引用留着，恢复时顺序、封面位置、精选标记全都原样回来。封面被移除时读取侧回退到第一张可见照片
 （`pickVisibleCover`），字段本身不改——用户恢复那张之后，封面还是它。
@@ -387,7 +391,8 @@ v1 只存故事层，是因为原型里用户能改的只有故事那一层；�
 以及**根因留档**：把两条旧公式并排算一遍，锁定「底部 0 / 中部 `inset` / 顶部 `2·inset`」
 这个特征，防止有人把百分比写回去。
 
-**合计 1637 条全绿**，`tsc --noEmit` 零错误，`expo export --platform web` 退出码 0。
+**合计 1681 条全绿**（`test-visibility` 增至 121 条，含移空自动删除 13 条），
+`tsc --noEmit` 零错误，`expo export --platform web` 退出码 0。
 运行方式需要 Node 22 的 `--experimental-strip-types` 加一个 loader：把 `@/` 别名补成真实路径、
 把 `data/mediaSource`（内含 `require(*.jpg)`）、`@react-native-async-storage/async-storage`
 （换成内存 Map）和 `expo`（`requireOptionalNativeModule` 返回 null）替换掉。

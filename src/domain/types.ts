@@ -117,6 +117,13 @@ export interface Story {
   coverTitleMode?: CoverTitleMode;
   /** 删除只改展示状态，不动地点 / 到访 / 媒体 */
   isDeleted: boolean;
+  /**
+   * 因照片被全部移除而**自动**删除的标记（用户确认的产品逻辑：
+   * 图库里把故事的照片移空，故事跟着进「已删除」）。
+   * 只在这条自动链路里置位/清除：恢复其中任何一张照片，故事自动回来。
+   * 用户手动删除时必须清掉它——手动删除是最终决定，恢复照片不该复活故事。
+   */
+  deletedByEmptying?: boolean;
   /** 合并进本册的源故事 ID，用于拆分还原 */
   mergedFromStoryIds?: string[];
   /**

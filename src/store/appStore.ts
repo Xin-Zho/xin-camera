@@ -20,7 +20,12 @@ import type {
   TimeRange,
   Visit,
 } from '@/src/domain/types';
-import { buildMediaVisibility, isMediaVisible, visibleMedia } from '@/src/domain/visibility';
+import {
+  buildMediaVisibility,
+  isMediaVisible,
+  visibleCount,
+  visibleMedia,
+} from '@/src/domain/visibility';
 import type { ImportCandidate, ImportPlan } from '@/src/library/importPlan';
 import { planLibraryImport } from '@/src/library/importPlan';
 import type { StorageIssue } from '@/src/store/storage';
@@ -451,7 +456,10 @@ const createAppState: StateCreator<AppState & AppActions> = (set, get) => ({
   deleteStory: (storyId) => {
     const state = get();
     const stories = state.stories.map((s) =>
-      s.id === storyId ? { ...s, isDeleted: true, updatedAt: nowISO() } : s,
+      s.id === storyId
+        ? // 手动删除是最终决定：清掉自动删除标记，之后恢复照片也不该复活这本
+          { ...s, isDeleted: true, deletedByEmptying: false, updatedAt: nowISO() }
+        : s,
     );
     set({
       stories,
@@ -464,7 +472,10 @@ const createAppState: StateCreator<AppState & AppActions> = (set, get) => ({
   restoreStory: (storyId) => {
     const state = get();
     const stories = state.stories.map((s) =>
-      s.id === storyId ? { ...s, isDeleted: false, updatedAt: nowISO() } : s,
+      s.id === storyId
+        ? // 手动恢复同样清标记：之后照片再被移空会重新自动删除，走同一条链
+          { ...s, isDeleted: false, deletedByEmptying: false, updatedAt: nowISO() }
+        : s,
     );
     set({
       stories,
@@ -484,9 +495,34 @@ const createAppState: StateCreator<AppState & AppActions> = (set, get) => ({
     const media = state.media.map((item) =>
       targets.has(item.id) ? { ...item, removedAt } : item,
     );
+
+    // 照片被移空的故事自动进「已删除」（用户确认的产品逻辑：图库里移空 → 故事跟着删）。
+    // 只删「本来有照片、现在一张都看不见」的活跃故事；天生没照片的不碰。
+    const probe = buildMediaVisibility(media, state.stories);
+    const emptiedIds = new Set(
+      state.stories
+        .filter(
+          (s) =>
+            !s.isDeleted &&
+            !s.mergedIntoStoryId &&
+            s.mediaIds.length > 0 &&
+            visibleCount(s.mediaIds, probe) === 0,
+        )
+        .map((s) => s.id),
+    );
+    const stories =
+      emptiedIds.size > 0
+        ? state.stories.map((s) =>
+            emptiedIds.has(s.id)
+              ? { ...s, isDeleted: true, deletedByEmptying: true, updatedAt: removedAt }
+              : s,
+          )
+        : state.stories;
+
     set({
       media,
-      timeRange: withReconciledRange(state.timeRange, media, state.stories),
+      stories,
+      timeRange: withReconciledRange(state.timeRange, media, stories),
     });
   },
 
@@ -502,9 +538,33 @@ const createAppState: StateCreator<AppState & AppActions> = (set, get) => ({
       delete next.removedAt;
       return next;
     });
+
+    // 对称恢复：因移空而自动删除的故事，只要有照片重新可见就自动回来。
+    // 可见性要用「候选故事暂时算活跃」的快照判——它们此刻还是 isDeleted，
+    // 直接判会把自家照片全算成 story-deleted，永远活不过来。
+    const candidates = state.stories.filter((s) => s.isDeleted && s.deletedByEmptying);
+    let stories = state.stories;
+    if (candidates.length > 0) {
+      const probeStories = state.stories.map((s) =>
+        s.isDeleted && s.deletedByEmptying ? { ...s, isDeleted: false } : s,
+      );
+      const probe = buildMediaVisibility(media, probeStories);
+      const reviveIds = new Set(
+        candidates.filter((s) => visibleCount(s.mediaIds, probe) > 0).map((s) => s.id),
+      );
+      if (reviveIds.size > 0) {
+        stories = stories.map((s) =>
+          reviveIds.has(s.id)
+            ? { ...s, isDeleted: false, deletedByEmptying: false, updatedAt: nowISO() }
+            : s,
+        );
+      }
+    }
+
     set({
       media,
-      timeRange: withReconciledRange(state.timeRange, media, state.stories),
+      stories,
+      timeRange: withReconciledRange(state.timeRange, media, stories),
     });
   },
 

@@ -175,7 +175,8 @@ export default function StoriesScreen() {
             {showDeleted
               ? deleted.map((story) => {
                   // 只有"因为这本被删才看不见"的照片才需要提示；
-                  // 被其他故事共用的照片仍然显示，说成隐藏反而是错的
+                  // 被其他故事共用的照片仍然显示，说成隐藏反而是错的。
+                  // 被移空自动删除的故事，照片的原因是 removed，要单独说明恢复路径
                   const hidden = story.mediaIds.filter(
                     (id) => hideReasonOf(visibility, id) === 'story-deleted',
                   ).length;
@@ -187,9 +188,11 @@ export default function StoriesScreen() {
                         </Text>
                         <Text style={styles.deletedMeta}>
                           {dayLabelOf(story)} ·{' '}
-                          {hidden > 0
-                            ? `${hidden} 张照片已从地图和时间轴隐藏`
-                            : '照片仍被其他故事使用'}
+                          {story.deletedByEmptying
+                            ? '照片已全部移除，恢复照片即可恢复这本'
+                            : hidden > 0
+                              ? `${hidden} 张照片已从地图和时间轴隐藏`
+                              : '照片仍被其他故事使用'}
                         </Text>
                       </View>
                       <Pressable onPress={() => restoreStory(story.id)} hitSlop={8}>
