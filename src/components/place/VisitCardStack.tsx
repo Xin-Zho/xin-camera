@@ -108,8 +108,9 @@ export function VisitCardStack({ place, visits, media, visibility, onOpenVisit }
               if (isActive) onOpenVisit(visit.id);
               else setActive(index);
             }}
-            style={[
+            style={({ pressed }) => [
               styles.card,
+              pressed && isActive && styles.cardPressed,
               {
                 zIndex: 100 - depth,
                 transform: [
@@ -118,14 +119,20 @@ export function VisitCardStack({ place, visits, media, visibility, onOpenVisit }
                 ],
                 opacity: 1 - depth * 0.12,
               },
-            ]}>
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={`到访 ${dayLabel} ${partLabel}，${visibleCount(visit.mediaIds, visibility)} 张照片`}>
             {source ? (
               <Image source={source} style={styles.cardImage} resizeMode="cover" />
             ) : (
               <View style={styles.cardImageFallback} />
             )}
 
-            <View style={styles.cardScrim} pointerEvents="none" />
+            <View style={styles.cardScrim} pointerEvents="none">
+              {/* 两层代替一整块：上层更淡，把纯色块那条硬上缘化开 */}
+              <View style={styles.scrimUpper} />
+              <View style={styles.scrimMain} />
+            </View>
 
             {isActive ? (
               <View style={styles.cardContent} pointerEvents="none">
@@ -174,6 +181,7 @@ const styles = StyleSheet.create({
     width: CARD_WIDTH,
     height: CARD_HEIGHT,
     borderRadius: radius.xl,
+    borderCurve: 'continuous',
     overflow: 'hidden',
     backgroundColor: colors.mediaPlaceholder,
     shadowColor: '#000',
@@ -181,6 +189,8 @@ const styles = StyleSheet.create({
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 8 },
   },
+  // 按压反馈用轻缩放：大元素不能缩太狠，也不能用 opacity（照片会变灰）
+  cardPressed: { transform: [{ translateY: 0 }, { scale: 0.98 }] },
   cardImage: { width: '100%', height: '100%' },
   cardImageFallback: { flex: 1, backgroundColor: colors.mediaPlaceholder },
   cardScrim: {
@@ -189,8 +199,10 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     height: '45%',
-    backgroundColor: 'rgba(0,0,0,0.28)',
   },
+  /** 没有渐变依赖，用两层色块把那条硬上缘化开：上 1/3 很淡，下 2/3 承担可读性 */
+  scrimUpper: { flex: 1, backgroundColor: 'rgba(0,0,0,0.10)' },
+  scrimMain: { flex: 2, backgroundColor: 'rgba(0,0,0,0.30)' },
   cardContent: {
     position: 'absolute',
     left: spacing.lg,
@@ -209,6 +221,9 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: radius.pill,
     backgroundColor: colors.surfaceTranslucent,
+    // 与地图页白色控件同一套定形语言
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separator,
   },
   openHintText: { ...typography.caption2, color: colors.textPrimary },
   pagerHint: {
@@ -216,7 +231,8 @@ const styles = StyleSheet.create({
     bottom: 0,
     alignItems: 'center',
   },
-  pagerHintText: { ...typography.caption, color: colors.textTertiary },
+  // HIG Accessibility：12pt 文本要 ≥4.5:1——textTertiary 只有约 2.7:1
+  pagerHintText: { ...typography.caption, color: colors.textSecondary },
   empty: { paddingVertical: spacing.huge, alignItems: 'center' },
   emptyText: { ...typography.callout, color: colors.textSecondary },
 });
