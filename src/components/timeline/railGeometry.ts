@@ -1,5 +1,5 @@
 /**
- * 时间轴的几何唯一定义（纯函数，无 import，可脱离真机断言）。
+ * 时间轴的几何唯一定义（纯函数，可脱离真机断言）。
  *
  * 之前的实际状况是**三套坐标系**：
  *
@@ -24,6 +24,13 @@
  *
  * 所有函数都标了 `'worklet'`：其中几个要在手势回调和 animated style 里跑，
  * 少标一个就会在 UI 线程上崩；在 Node 里 `'worklet'` 只是普通字符串，不影响断言。
+ *
+ * ── 真机崩溃教训（M13 第一版在这里踩过的坑，别改回去）──
+ * 第一版用了「默认参数 `inset = RAIL_INSET`」+「`Number.isFinite/isNaN`」，
+ * 在 Expo Go（worklet runtime）上加载首帧直接原生崩溃。现在：
+ * - **不用默认参数**：每个函数的参数全部显式传，worklet 序列化只处理普通参数；
+ * - **不用 `Number.isFinite/isNaN`**：用 `v === v`（非 NaN）与 `±Infinity` 比较，
+ *   只依赖 JS 基础字面量，任何 runtime 都有。
  */
 
 /** 轨道上下内缩。刻度的起点与终点、滑动块的行程都以它为准，改这里就够了 */
@@ -35,17 +42,23 @@ export const THUMB_SIZE = 26;
 /** 刻度槽高度 = 最粗的选中刻度高度，槽内居中排布，这样中心点即刻度位置 */
 export const TICK_SLOT = 3;
 
-/** 有效轨道高度：两端各让出 inset */
-export function railSize(height: number, inset: number = RAIL_INSET): number {
+/** v 是「正常数」：非 NaN、非 ±Infinity。NaN 与自身不等，这是 JS 语义 */
+function isNormalNumber(v: number): boolean {
   'worklet';
-  if (!Number.isFinite(height) || !Number.isFinite(inset)) return 0;
+  return v === v && v !== Infinity && v !== -Infinity;
+}
+
+/** 有效轨道高度：两端各让出 inset */
+export function railSize(height: number, inset: number): number {
+  'worklet';
+  if (!isNormalNumber(height) || !isNormalNumber(inset)) return 0;
   return Math.max(0, height - inset * 2);
 }
 
 /** ratio 归一到 [0, 1]；NaN 当 0（宁可不动也别乱跳），±Infinity 夹到对应端点 */
 export function clampRatio(ratio: number): number {
   'worklet';
-  if (Number.isNaN(ratio)) return 0;
+  if (ratio !== ratio) return 0;
   if (ratio <= 0) return 0;
   if (ratio >= 1) return 1;
   return ratio;
@@ -67,55 +80,39 @@ export function indexForRatio(ratio: number, count: number): number {
 }
 
 /** 刻度 / 滑动块**中心**到轨道底边的距离（px）。ratio 0 = 最早 = 底部 */
-export function centerFromBottom(
-  ratio: number,
-  height: number,
-  inset: number = RAIL_INSET,
-): number {
+export function centerFromBottom(ratio: number, height: number, inset: number): number {
   'worklet';
   return inset + clampRatio(ratio) * railSize(height, inset);
 }
 
-/** 刻度槽的 `bottom` 值：把槽（TICK_SLOT 高）的中心对到刻度线上 */
+/** 刻度槽的 `bottom` 值：把槽（slot 高）的中心对到刻度线上 */
 export function tickBottom(
   ratio: number,
   height: number,
-  inset: number = RAIL_INSET,
-  slot: number = TICK_SLOT,
+  inset: number,
+  slot: number,
 ): number {
   'worklet';
   return centerFromBottom(ratio, height, inset) - slot / 2;
 }
 
 /** 触摸点（距轨道顶部）→ ratio。超出两端按边界夹住，不越界也不吸到另一端 */
-export function ratioForTouchY(
-  y: number,
-  height: number,
-  inset: number = RAIL_INSET,
-): number {
+export function ratioForTouchY(y: number, height: number, inset: number): number {
   'worklet';
   const size = railSize(height, inset);
   // 轨道还没量出来（或高度不足两端内缩）时不响应，别把索引甩到 0
-  if (!(size > 0) || !Number.isFinite(y)) return 0;
+  if (!(size > 0) || !isNormalNumber(y)) return 0;
   return clampRatio((height - inset - y) / size);
 }
 
 /** ratio → 触摸点（距轨道顶部）。ratioForTouchY 的逆映射，用于断言正反一致 */
-export function touchYForRatio(
-  ratio: number,
-  height: number,
-  inset: number = RAIL_INSET,
-): number {
+export function touchYForRatio(ratio: number, height: number, inset: number): number {
   'worklet';
   return height - inset - clampRatio(ratio) * railSize(height, inset);
 }
 
 /** 滑动块中心距轨道顶部的距离 */
-export function thumbCenterY(
-  ratio: number,
-  height: number,
-  inset: number = RAIL_INSET,
-): number {
+export function thumbCenterY(ratio: number, height: number, inset: number): number {
   'worklet';
   return height - centerFromBottom(ratio, height, inset);
 }
@@ -131,8 +128,8 @@ export function thumbCenterY(
 export function thumbTranslateY(
   ratio: number,
   height: number,
-  inset: number = RAIL_INSET,
-  size: number = THUMB_SIZE,
+  inset: number,
+  size: number,
 ): number {
   'worklet';
   return thumbCenterY(ratio, height, inset) - size / 2;

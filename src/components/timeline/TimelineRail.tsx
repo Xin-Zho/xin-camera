@@ -59,7 +59,7 @@ function applyTouchY(
 ) {
   'worklet';
   if (railHeight <= 0 || count <= 0) return;
-  const ratio = ratioForTouchY(y, railHeight);
+  const ratio = ratioForTouchY(y, railHeight, RAIL_INSET);
   progress.value = ratio;
   const next = indexForRatio(ratio, count);
   if (next !== lastIndex.value) {
@@ -132,15 +132,14 @@ export function TimelineRail({ ticks, activeIndex, onIndexChange, onRelease }: P
     [count, dragging, lastIndex, notify, progress, railHeight, release],
   );
 
-  const thumbStyle = useAnimatedStyle(() => {
-    const height = railHeight.value;
-    // 布局出来之前不画：否则滑块会按 height = 0 停在轨道外一帧
-    if (height <= 0) return { opacity: 0, transform: [{ translateY: 0 }] };
-    return {
-      opacity: 1,
-      transform: [{ translateY: thumbTranslateY(progress.value, height) }],
-    };
-  });
+  // 刻意写成单一表达式、不 early-return：animated style 返回形状恒定最稳。
+  // 轨道没量出来时 opacity 0，位移是多少都看不见。
+  const thumbStyle = useAnimatedStyle(() => ({
+    opacity: railHeight.value > 0 ? 1 : 0,
+    transform: [
+      { translateY: thumbTranslateY(progress.value, railHeight.value, RAIL_INSET, THUMB_SIZE) },
+    ],
+  }));
 
   const activeTick = ticks[activeIndex];
 
@@ -156,7 +155,7 @@ export function TimelineRail({ ticks, activeIndex, onIndexChange, onRelease }: P
                   key={tick.key}
                   style={[
                     styles.tickSlot,
-                    { bottom: tickBottom(ratioForIndex(index, count), layoutHeight) },
+                    { bottom: tickBottom(ratioForIndex(index, count), layoutHeight, RAIL_INSET, TICK_SLOT) },
                   ]}>
                   <View
                     style={[
