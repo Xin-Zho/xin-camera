@@ -126,8 +126,9 @@ export default function VisitGalleryScreen() {
     <View style={styles.headerRow}>
       <Pressable
         onPress={() => (selecting ? exitSelection() : router.back())}
-        style={styles.backButton}
+        style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
         hitSlop={8}
+        accessibilityRole="button"
         accessibilityLabel={selecting ? '退出选择' : '返回'}>
         <SymbolView
           name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }}
@@ -148,7 +149,9 @@ export default function VisitGalleryScreen() {
       {items.length > 0 || selecting ? (
         <Pressable
           onPress={() => (selecting ? exitSelection() : enterSelection())}
-          hitSlop={10}>
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel={selecting ? '取消选择' : '进入多选'}>
           <Text style={styles.selectToggle}>{selecting ? '取消' : '选择'}</Text>
         </Pressable>
       ) : null}
@@ -217,6 +220,7 @@ export default function VisitGalleryScreen() {
             })
           }
           style={({ pressed }) => [styles.storyLink, pressed && styles.storyLinkPressed]}
+          accessibilityRole="button"
           accessibilityLabel={`打开故事 ${linkedStory.title}`}>
           <SymbolView
             name={{ ios: 'book', android: 'menu_book', web: 'menu_book' }}
@@ -278,7 +282,13 @@ export default function VisitGalleryScreen() {
           <Pressable
             onPress={handleRemove}
             disabled={selectedIds.length === 0}
-            style={[styles.removeButton, selectedIds.length === 0 && styles.buttonDisabled]}>
+            style={({ pressed }) => [
+              styles.removeButton,
+              pressed && selectedIds.length > 0 && styles.removeButtonPressed,
+              selectedIds.length === 0 && styles.buttonDisabled,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={`从回忆相册移除所选照片`}>
             <Text style={styles.removeButtonText}>
               从回忆相册移除{selectedIds.length > 0 ? ` ${selectedIds.length} 张` : ''}
             </Text>
@@ -309,12 +319,14 @@ function GalleryTile({
       onPress={onPress}
       onLongPress={onLongPress}
       delayLongPress={320}
-      style={[styles.tile, { width: TILE, height: TILE }, selected && styles.tileSelected]}>
+      style={[styles.tile, { width: TILE, height: TILE }]}>
       {source ? (
         <Image source={source} style={styles.tileImage} resizeMode="cover" />
       ) : (
         <View style={styles.tileFallback} />
       )}
+      {/* 选中描边画在覆盖层上：borderWidth 会挤压内容，选中瞬间照片会跳一下 */}
+      {selected ? <View style={styles.selectedRing} pointerEvents="none" /> : null}
       {isPortrait ? <View style={styles.portraitHint} /> : null}
       {item.kind === 'video' ? (
         <View style={styles.videoBadge}>
@@ -357,13 +369,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: colors.backgroundGrouped,
   },
+  // 与地点页返回键同一套按压语言
+  backButtonPressed: { transform: [{ scale: 0.92 }] },
   headerText: { flex: 1, gap: 1 },
   title: { ...typography.title2, color: colors.textPrimary },
-  meta: { ...typography.footnote, color: colors.textTertiary },
+  // HIG Accessibility：13pt 文本要 ≥4.5:1——textTertiary 只有约 2.7:1
+  meta: { ...typography.footnote, color: colors.textSecondary },
   selectToggle: { ...typography.callout, color: colors.accent, fontWeight: '600' },
   sectionLabel: {
     ...typography.caption2,
-    color: colors.textTertiary,
+    color: colors.textSecondary,
     letterSpacing: 0.8,
     marginBottom: spacing.sm,
   },
@@ -378,15 +393,26 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     backgroundColor: colors.accentMuted,
   },
-  storyLinkPressed: { opacity: 0.6 },
+  // 统一为缩放反馈（浅蓝底降 opacity 也能读出，但一套语言更干净）
+  storyLinkPressed: { transform: [{ scale: 0.97 }] },
   storyLinkText: { ...typography.footnote, color: colors.accent, flex: 1 },
   storyLinkChevron: { ...typography.callout, color: colors.accent },
   tile: {
     borderRadius: radius.sm,
+    borderCurve: 'continuous',
     overflow: 'hidden',
     backgroundColor: colors.mediaPlaceholder,
   },
-  tileSelected: { borderWidth: 2, borderColor: colors.accent },
+  selectedRing: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    borderWidth: 2,
+    borderColor: colors.accent,
+    borderRadius: radius.sm,
+  },
   tileImage: { width: '100%', height: '100%' },
   tileFallback: { flex: 1, backgroundColor: colors.mediaPlaceholder },
   portraitHint: {
@@ -436,8 +462,8 @@ const styles = StyleSheet.create({
     borderTopColor: colors.separator,
     gap: spacing.sm,
   },
-  removedToggle: { ...typography.footnote, color: colors.textTertiary },
-  removedHint: { ...typography.caption2, color: colors.textTertiary },
+  removedToggle: { ...typography.footnote, color: colors.textSecondary },
+  removedHint: { ...typography.caption2, color: colors.textSecondary },
   removedGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: GAP, marginTop: spacing.xs },
   removedImage: { opacity: 0.45 },
   restorePill: {
@@ -448,6 +474,9 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: radius.pill,
     backgroundColor: colors.surfaceTranslucent,
+    // 与地图页 / 卡片堆的白色胶囊同一套定形语言
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separator,
   },
   restorePillText: { ...typography.caption2, color: colors.textPrimary },
   actionBar: {
@@ -462,7 +491,7 @@ const styles = StyleSheet.create({
     borderTopColor: colors.separator,
     backgroundColor: colors.surface,
   },
-  actionHint: { ...typography.caption, color: colors.textTertiary, textAlign: 'center' },
+  actionHint: { ...typography.caption, color: colors.textSecondary, textAlign: 'center' },
   removeButton: {
     height: layout.minTouchTarget,
     borderRadius: radius.pill,
@@ -470,6 +499,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: colors.danger,
   },
+  removeButtonPressed: { transform: [{ scale: 0.97 }] },
   removeButtonText: { ...typography.callout, color: colors.textOnMedia, fontWeight: '600' },
   buttonDisabled: { opacity: 0.38 },
 });
