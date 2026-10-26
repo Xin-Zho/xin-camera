@@ -31,6 +31,7 @@ Android / iOS / Web 之外的平台没有验证过，Web 上地图不可用（re
 - `docs/v3-date-rule.md` —— 日期归属口径：三个来源的优先级、反推偏移、样本清单、反查时区的判定规则
 - `docs/v4-import.md` —— 照片导入：切分与去重规则、不覆盖用户编辑、归属日固定、存档 v2
 - `docs/v5-visibility.md` —— 照片可见性：删故事 / 移除照片的共同判定、时间轴动态范围、恢复路径
+- `docs/v6-rail-geometry.md` —— 时间轴几何：刻度 / 滑块 / 拖动共用一套坐标，根因与真机待验项
 - `AGENTS.md` —— 多 agent 协作约定（权威文件、分工边界、版本策略）
 
 ## 目录
@@ -68,7 +69,10 @@ src/
 ├── store/appStore.ts                Zustand 单一 store + AsyncStorage 存档
 ├── store/storage.ts                 存档健康状态与隔离存档
 ├── store/selectors.ts               派生数据纯函数
-├── components/                      map / timeline / place / story / common 组件
+├── components/timeline/
+│   ├── TimelineRail.tsx             竖向时间轴（手势 + 刻度 + 滑块）
+│   └── railGeometry.ts              刻度 / 滑块 / 拖动共用的几何纯函数（起点·终点·有效高度）
+├── components/                      map / place / story / common 组件
 ├── theme/                           颜色、间距、字体 token
 ├── utils/datetime.ts                日期格式化与时段描述
 └── utils/mediaFit.ts                图片等比缩进容器的纯函数
@@ -90,6 +94,7 @@ src/
 - [x] M10 日期归属口径验证（EXIF 偏移 → DateTimeOriginal → 设备时区三级判定，附反查时区的判定规则）
 - [x] M11 照片导入（有定位生成地点与到访 / 无定位进「未定位」/ 重复导入不重复生成 / 不覆盖用户编辑 / 归属日在导入时固定）
 - [x] M12 照片可见性统一（删故事与移除照片共用同一套判定 / 图库多选移除与回收站恢复 / 时间轴按有效照片动态收敛）
+- [ ] M13 时间轴几何统一（刻度 / 滑块 / 拖动共用一套像素坐标）— 代码与断言完成，**真机未验**
 
 ## 照片可见性（M12）
 
@@ -153,6 +158,25 @@ src/
   旧实现是「时刻区间求交」，跨午夜的到访会同时出现在两格里，时间轴计数和地图标记数对不上。
 - **选中时间超出新范围时自动收回**（`reconcileRangeToSpan`）：落到离原位置最近的刻度。
   删掉最新一批就退到新的最晚一格，删掉最早一批则原地不动。
+
+## 时间轴几何（M13）
+
+时间轴上的「哪个 ratio 落在哪个高度」之前有三套算法，真机上的表现是
+**底部对齐、越往上越偏**（详见 `docs/v6-rail-geometry.md`）：
+
+| 谁 | 之前 | 现在 |
+|---|---|---|
+| 刻度 | `bottom: ratio × 100%` + `paddingVertical: 16` | `tickBottom(ratio, 高度)` 像素 |
+| 滑块 | `translateY(-ratio × 整个轨道高度)` + `marginBottom: -13` | `thumbTranslateY(ratio, 高度)`，布局改 `top: 0` |
+| 拖动 | `y / 整个轨道高度` | `ratioForTouchY(y, 高度)` |
+
+三者现在只认 `src/components/timeline/railGeometry.ts`：起点 = 顶部内缩，
+终点 = 底部内缩，有效高度 = `高度 − 2 × 内缩`，**一律像素，不再出现百分比**。
+百分比的解析盒在原生（内容盒，`YGErrataAll` 含 `AbsolutePercentAgainstInnerSize`）
+和 Web（padding 盒）不一样，这就是偏 32px 的来源——现在两边都按同一套像素算，
+Web 与原生必然一致。
+
+顺带：滑块不再半个探出卡片外，刻度不再超出竖线两端。
 
 ## 本地持久化
 
@@ -321,8 +345,8 @@ v1 只存故事层，是因为原型里用户能改的只有故事那一层；�
 
 断言脚本不进仓库（属一次性校验工具），但每轮改完都会全量重跑。
 
-`store` 与 `selectors` 的合并 / 拆分 / 删除 / 恢复语义 **91 条**，v1 兼容路径 **31 条**，
-存档层 **38 条**，直接跑真实 store（zustand 不依赖 React 渲染），覆盖嵌套合并、重复合并、
+`store` 与 `selectors` 的合并 / 拆分 / 删除 / 恢复语义 **91 条**，存档层 **38 条**，
+直接跑真实 store（zustand 不依赖 React 渲染），覆盖嵌套合并、重复合并、
 删除合集后恢复、连续操作、跨页一致、时段与聚合一致；存档侧覆盖 `partialize` 范围
 （四层都存、瞬态状态不存）、写盘内容、重启 round-trip、脏存档过滤、v1 → v2 版本迁移、
 重置、以及「合集快照跟着存档走」。
@@ -355,7 +379,15 @@ v1 只存故事层，是因为原型里用户能改的只有故事那一层；�
 全部删完时**可见照片为 0 但不回退示例数据**、地图一个标记都不剩，
 重复导入不复活已移除照片，`removedAt` 随媒体进存档。
 
-**合计 701 条全绿**，`tsc --noEmit` 零错误，`expo export --platform web` 退出码 0。
+时间轴几何层 **967 条**（`test-rail-geometry`）—— 每一条都按**顶部 / 中部 / 底部**
+三点查，而不是抽查中间值：刻度与竖线两端对齐、刻度中心与滑块中心在每个索引上重合、
+刻度槽中心 = 刻度线、滑块不越出轨道盒、正向映射与逆向映射一致（`y → ratio → y` 与
+`ratio → y → ratio`）、索引 ↔ ratio 互为逆映射、拖动时手指位置 = 滑块中心、
+越界夹取（含 NaN / ±Infinity）、退化高度不出 NaN、单调与等间距，
+以及**根因留档**：把两条旧公式并排算一遍，锁定「底部 0 / 中部 `inset` / 顶部 `2·inset`」
+这个特征，防止有人把百分比写回去。
+
+**合计 1637 条全绿**，`tsc --noEmit` 零错误，`expo export --platform web` 退出码 0。
 运行方式需要 Node 22 的 `--experimental-strip-types` 加一个 loader：把 `@/` 别名补成真实路径、
 把 `data/mediaSource`（内含 `require(*.jpg)`）、`@react-native-async-storage/async-storage`
 （换成内存 Map）和 `expo`（`requireOptionalNativeModule` 返回 null）替换掉。
@@ -375,6 +407,10 @@ v1 只存故事层，是因为原型里用户能改的只有故事那一层；�
 - 合集标题只能自动生成，界面上没有让用户直接输入合集名的入口（可进合集后在编辑页改）。
 - 拆分按合并前快照还原，合并后在合集里做的修改会丢弃（确认弹窗已说明）。
 - 时间轴松手后的地图跟随一次只挑「当前时段到访最多」的一个地点，跨城市时不会一次展示全部。
+- 时间轴只认一套像素几何，但**没有真机确认过**：地图页依赖 `react-native-maps`，
+  这个库没有 Web 实现，本地连预览都起不来（见 `docs/v6-rail-geometry.md` 第 4 节）。
+  断言覆盖的是几何数值，不是渲染结果。
+- 轨道高度不足两端内缩（< 32px）时有效高度为 0，拖动不响应，界面上也不给提示。
 - 编辑页的键盘避让未在极小屏（SE 尺寸）上验证过。
 - 图库多选移除没有「全选」，也没有跨到访的批量操作；一次只能在当前到访里选。
 - 移除照片**没有 undo 撤销条**，只能去「已移除的照片」里再点一次恢复。

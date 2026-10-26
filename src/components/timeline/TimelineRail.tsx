@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -12,7 +12,16 @@ import Animated, {
 import type { TimelineTick } from '@/src/domain/timeline';
 import { colors, layout, radius, spacing, typography } from '@/src/theme';
 
-const THUMB = 26;
+import {
+  RAIL_INSET,
+  THUMB_SIZE,
+  TICK_SLOT,
+  indexForRatio,
+  ratioForIndex,
+  ratioForTouchY,
+  thumbTranslateY,
+  tickBottom,
+} from './railGeometry';
 
 /**
  * 地图右侧的半透明竖向时间轴（规格 §9）。
@@ -20,6 +29,10 @@ const THUMB = 26;
  * 手势跑在 UI 线程：`Gesture.Pan` 的回调是 worklet，直接改 shared value 驱动滑块位移，
  * 不再每帧回 JS 改 `bottom` 百分比（那是每帧一次布局计算）。
  * 只有索引真的跨过刻度时才 `runOnJS` 通知上层，避免拖动时每帧一次跨线程 + store 写入。
+ *
+ * 刻度、滑块、拖动共用 `railGeometry` 一套坐标（起点 / 终点 / 有效高度同一个来源），
+ * 这里只负责把算好的像素值画出去。**不要再在样式里写百分比定位**——百分比在原生端按
+ * 内容盒解析、在 Web 端按 padding 盒解析，那正是之前上下不一致的来源。
  *
  * 刻意不用 Slider：竖向拖动 + 刻度吸附必须自己算。
  */
@@ -46,9 +59,9 @@ function applyTouchY(
 ) {
   'worklet';
   if (railHeight <= 0 || count <= 0) return;
-  const ratioFromTop = Math.min(1, Math.max(0, y / railHeight));
-  progress.value = 1 - ratioFromTop;
-  const next = Math.round((1 - ratioFromTop) * (count - 1));
+  const ratio = ratioForTouchY(y, railHeight);
+  progress.value = ratio;
+  const next = indexForRatio(ratio, count);
   if (next !== lastIndex.value) {
     lastIndex.value = next;
     runOnJS(notify)(next);
@@ -59,6 +72,11 @@ export function TimelineRail({ ticks, activeIndex, onIndexChange, onRelease }: P
   const count = ticks.length;
 
   const railHeight = useSharedValue(0);
+  /**
+   * 同一个 onLayout 喂两处：shared value 给 UI 线程的滑块与拖动，
+   * state 给刻度的像素排版。**必须同源**，否则又变成各算一套高度。
+   */
+  const [layoutHeight, setLayoutHeight] = useState(0);
   const progress = useSharedValue(0);
   const lastIndex = useSharedValue(activeIndex);
   const dragging = useSharedValue(false);
@@ -75,14 +93,16 @@ export function TimelineRail({ ticks, activeIndex, onIndexChange, onRelease }: P
     if (count <= 0) return;
     lastIndex.value = activeIndex;
     if (dragging.value) return;
-    const target = count > 1 ? activeIndex / (count - 1) : 0;
+    const target = ratioForIndex(activeIndex, count);
     if (Math.abs(progress.value - target) < 0.001) return;
     progress.value = withTiming(target, { duration: 180 });
   }, [activeIndex, count, dragging, lastIndex, progress]);
 
   const handleLayout = useCallback(
     (e: LayoutChangeEvent) => {
-      railHeight.value = e.nativeEvent.layout.height;
+      const height = e.nativeEvent.layout.height;
+      railHeight.value = height;
+      setLayoutHeight((prev) => (prev === height ? prev : height));
     },
     [railHeight],
   );
@@ -100,23 +120,27 @@ export function TimelineRail({ ticks, activeIndex, onIndexChange, onRelease }: P
         })
         .onEnd(() => {
           // 吸附到最近的刻度：拖动中滑块跟手指连续移动，松手才对齐
-          const target = count > 1 ? lastIndex.value / (count - 1) : 0;
-          progress.value = withTiming(target, { duration: 140 });
+          progress.value = withTiming(ratioForIndex(lastIndex.value, count), { duration: 140 });
           runOnJS(release)(lastIndex.value);
         })
         .onFinalize((_e, success) => {
           dragging.value = false;
           if (success) return;
-          const target = count > 1 ? lastIndex.value / (count - 1) : 0;
-          progress.value = withTiming(target, { duration: 140 });
+          progress.value = withTiming(ratioForIndex(lastIndex.value, count), { duration: 140 });
           runOnJS(release)(lastIndex.value);
         }),
     [count, dragging, lastIndex, notify, progress, railHeight, release],
   );
 
-  const thumbStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: -progress.value * railHeight.value }],
-  }));
+  const thumbStyle = useAnimatedStyle(() => {
+    const height = railHeight.value;
+    // 布局出来之前不画：否则滑块会按 height = 0 停在轨道外一帧
+    if (height <= 0) return { opacity: 0, transform: [{ translateY: 0 }] };
+    return {
+      opacity: 1,
+      transform: [{ translateY: thumbTranslateY(progress.value, height) }],
+    };
+  });
 
   const activeTick = ticks[activeIndex];
 
@@ -125,21 +149,25 @@ export function TimelineRail({ ticks, activeIndex, onIndexChange, onRelease }: P
       <GestureDetector gesture={gesture}>
         <View style={styles.track} onLayout={handleLayout}>
           <View style={styles.trackLine} />
-          {ticks.map((tick, index) => {
-            const ratio = count > 1 ? index / (count - 1) : 0;
-            const isActive = index === activeIndex;
-            return (
-              <View
-                key={tick.key}
-                style={[
-                  styles.tickMark,
-                  { bottom: `${ratio * 100}%` },
-                  tick.isYearStart && styles.tickMarkYear,
-                  isActive && styles.tickMarkActive,
-                ]}
-              />
-            );
-          })}
+          {/* 刻度要按像素排，得先知道轨道高度；量到之前空着，一帧都不到 */}
+          {layoutHeight > 0
+            ? ticks.map((tick, index) => (
+                <View
+                  key={tick.key}
+                  style={[
+                    styles.tickSlot,
+                    { bottom: tickBottom(ratioForIndex(index, count), layoutHeight) },
+                  ]}>
+                  <View
+                    style={[
+                      styles.tickMark,
+                      tick.isYearStart && styles.tickMarkYear,
+                      index === activeIndex && styles.tickMarkActive,
+                    ]}
+                  />
+                </View>
+              ))
+            : null}
           <Animated.View style={[styles.thumb, thumbStyle]}>
             <Text style={styles.thumbLabel} numberOfLines={1}>
               {activeTick?.label ?? ''}
@@ -171,7 +199,7 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
     borderRadius: radius.pill,
     backgroundColor: colors.surfaceTranslucent,
-    paddingVertical: spacing.lg,
+    paddingVertical: RAIL_INSET,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
@@ -179,15 +207,27 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
   },
+  /** 竖线的两端就是刻度的起点与终点，与 RAIL_INSET 同一个内缩 */
   trackLine: {
     position: 'absolute',
-    top: spacing.lg,
-    bottom: spacing.lg,
+    top: RAIL_INSET,
+    bottom: RAIL_INSET,
     width: 1,
     backgroundColor: colors.separator,
   },
-  tickMark: {
+  /**
+   * 刻度槽：固定 TICK_SLOT 高、居中放真正的那一小条。
+   * 这样「槽的中心 = 刻度位置」对粗细三种刻度都成立，
+   * 不必给每个变体各算一次半高偏移。
+   */
+  tickSlot: {
     position: 'absolute',
+    width: 16,
+    height: TICK_SLOT,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tickMark: {
     width: 8,
     height: 1,
     backgroundColor: colors.separatorStrong,
@@ -204,13 +244,13 @@ const styles = StyleSheet.create({
   },
   thumb: {
     position: 'absolute',
-    bottom: 0,
+    // 布局从轨道顶部起算，纵向位置全部由 transform 表达（中心点差在 railGeometry 里扣）
+    top: 0,
     // 按日展示时刻度标签是「10月12日」，固定 26 的圆放不下，
     // 改成可横向撑开的胶囊；短标签（2026 / 10月）仍然是最小圆形宽度
-    minWidth: THUMB,
-    height: THUMB,
+    minWidth: THUMB_SIZE,
+    height: THUMB_SIZE,
     paddingHorizontal: 6,
-    marginBottom: -THUMB / 2,
     borderRadius: radius.pill,
     backgroundColor: colors.textPrimary,
     alignItems: 'center',
