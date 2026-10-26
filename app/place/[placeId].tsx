@@ -68,8 +68,9 @@ export default function PlaceScreen() {
       <View style={styles.headerRow}>
         <Pressable
           onPress={() => router.back()}
-          style={styles.backButton}
+          style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
           hitSlop={8}
+          accessibilityRole="button"
           accessibilityLabel="返回">
           <SymbolView
             name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }}
@@ -78,7 +79,8 @@ export default function PlaceScreen() {
           />
         </Pressable>
         <View style={styles.headerText}>
-          <Text style={styles.placeName} numberOfLines={1}>
+          {/* 长地点名放宽到两行：截断成「深圳湾体育馆…」比换行更难认 */}
+          <Text style={styles.placeName} numberOfLines={2}>
             {place?.name ?? '地点'}
           </Text>
           <Text style={styles.placeMeta} numberOfLines={1}>
@@ -124,9 +126,11 @@ export default function PlaceScreen() {
         </View>
       )}
 
-      <Text style={styles.footnote}>
-        每张卡片是一次到访。故事相册里，它们各自成为一本。
-      </Text>
+      {visits.length > 0 ? (
+        <Text style={styles.footnote}>
+          每张卡片是一次到访。故事相册里，它们各自成为一本。
+        </Text>
+      ) : null}
     </ScrollView>
   );
 }
@@ -147,19 +151,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: colors.backgroundGrouped,
   },
-  headerText: { flex: 1, gap: 1 },
+  // 与地图页浮动控件同一套按压语言：轻缩放，任何背景都读得出
+  backButtonPressed: { transform: [{ scale: 0.92 }] },
+  headerText: { flex: 1, gap: 2 },
   placeName: { ...typography.title2, color: colors.textPrimary },
-  placeMeta: { ...typography.footnote, color: colors.textTertiary },
+  // HIG Accessibility：13pt 文本要 ≥4.5:1——textTertiary 只有约 2.7:1
+  placeMeta: { ...typography.footnote, color: colors.textSecondary },
   latestLine: {
     ...typography.caption,
-    color: colors.textTertiary,
+    color: colors.textSecondary,
     paddingHorizontal: layout.screenPadding,
     marginTop: spacing.md,
     marginBottom: spacing.sm,
   },
   footnote: {
     ...typography.caption,
-    color: colors.textTertiary,
+    color: colors.textSecondary,
     textAlign: 'center',
     paddingHorizontal: spacing.xxl,
     marginTop: spacing.lg,
