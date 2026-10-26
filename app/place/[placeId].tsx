@@ -5,7 +5,12 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { VisitCardStack } from '@/src/components/place/VisitCardStack';
-import { selectPlaceById, selectVisitsOfPlace } from '@/src/store/selectors';
+import { isVisitVisible } from '@/src/domain/visibility';
+import {
+  selectPlaceById,
+  selectVisibility,
+  selectVisitsOfPlace,
+} from '@/src/store/selectors';
 import { useAppStore } from '@/src/store/appStore';
 import { colors, layout, radius, spacing, typography } from '@/src/theme';
 import {
@@ -25,11 +30,18 @@ export default function PlaceScreen() {
   const places = useAppStore((s) => s.places);
   const allVisits = useAppStore((s) => s.visits);
   const media = useAppStore((s) => s.media);
+  const stories = useAppStore((s) => s.stories);
 
   const place = selectPlaceById(places, placeId ?? null);
+  const visibility = useMemo(() => selectVisibility(media, stories), [stories, media]);
   const visits = useMemo(
-    () => (place ? selectVisitsOfPlace(allVisits, place.id) : []),
-    [allVisits, place],
+    () =>
+      place
+        ? selectVisitsOfPlace(allVisits, place.id).filter((visit) =>
+            isVisitVisible(visit, visibility),
+          )
+        : [],
+    [allVisits, place, visibility],
   );
 
   const latest = visits[0];
@@ -90,6 +102,7 @@ export default function PlaceScreen() {
           place={place}
           visits={visits}
           media={media}
+          visibility={visibility}
           onOpenVisit={(visitId) =>
             router.push({ pathname: '/visit/[visitId]', params: { visitId } })
           }

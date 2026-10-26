@@ -5,7 +5,12 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 import type { StateStorage } from 'zustand/middleware';
 
 import { mockMedia, mockPlaces, mockStories, mockVisits } from '@/src/data';
-import { makeMonthRange } from '@/src/domain/timeline';
+import {
+  computeMediaSpan,
+  makeMonthRange,
+  makeRange,
+  reconcileRangeToSpan,
+} from '@/src/domain/timeline';
 import type {
   CoverTitleMode,
   MediaAsset,
@@ -15,6 +20,7 @@ import type {
   TimeRange,
   Visit,
 } from '@/src/domain/types';
+import { buildMediaVisibility, isMediaVisible, visibleMedia } from '@/src/domain/visibility';
 import type { ImportCandidate, ImportPlan } from '@/src/library/importPlan';
 import { planLibraryImport } from '@/src/library/importPlan';
 import type { StorageIssue } from '@/src/store/storage';
@@ -87,6 +93,15 @@ interface AppActions {
   splitStory: (storyId: string) => string[];
   deleteStory: (storyId: string) => void;
   restoreStory: (storyId: string) => void;
+  /**
+   * 从回忆相册移除照片。**不删系统相册原图**，只在本 App 内隐藏。
+   *
+   * 只写 `removedAt`，不动 `story.mediaIds` / `visit.mediaIds` / `place.mediaIds`：
+   * 引用留着，恢复时顺序和封面位置才能原样回来。显示与否由 `domain/visibility` 统一判定。
+   */
+  removeMedia: (mediaIds: string[]) => void;
+  /** 撤销移除。已移除的照片不会因为重新导入而自动复活，只能从这里恢复 */
+  restoreMedia: (mediaIds: string[]) => void;
   /** 丢掉本地存档，回到示例数据（设置页用） */
   resetToMock: () => void;
   /**
@@ -129,6 +144,21 @@ function mapStory(
 function normalizeTitle(raw: string): string | null {
   const next = raw.replace(/\s+/g, ' ').trim();
   return next.length > 0 ? next : null;
+}
+
+/**
+ * 数据一变就重算时间轴范围。
+ *
+ * 「有效照片集合」是唯一输入：删除故事、恢复故事、移除照片、恢复照片、导入之后都要过一遍。
+ * 不重算的话会出现两种硬伤——滑块停在已经不存在的月份上，
+ * 或者只剩三天照片却还按整月铺刻度（滑轨上一大半位置是空的）。
+ *
+ * 没有有效照片时原样返回：空状态由页面判断，不在这里编一个假范围糊弄过去。
+ */
+function withReconciledRange(prev: TimeRange, media: MediaAsset[], stories: Story[]): TimeRange {
+  const span = computeMediaSpan(visibleMedia(media, buildMediaVisibility(media, stories)));
+  if (!span) return prev;
+  return reconcileRangeToSpan(prev, span);
 }
 
 /**
@@ -413,20 +443,70 @@ const createAppState: StateCreator<AppState & AppActions> = (set, get) => ({
     return restoredIds;
   },
 
-  deleteStory: (storyId) =>
-    set((state) => ({
-      stories: state.stories.map((s) =>
-        s.id === storyId ? { ...s, isDeleted: true, updatedAt: nowISO() } : s,
-      ),
+  /**
+   * 软删除故事。**不改媒体引用**——照片是否还显示由 `domain/visibility` 判定：
+   * 只要还有一本没删的故事引用它，它就继续出现在地图和到访图库里。
+   * 这是「删故事 → 照片跟着从地图/时间轴消失」的实现方式，不是把照片删掉。
+   */
+  deleteStory: (storyId) => {
+    const state = get();
+    const stories = state.stories.map((s) =>
+      s.id === storyId ? { ...s, isDeleted: true, updatedAt: nowISO() } : s,
+    );
+    set({
+      stories,
       lastMergedStoryId: state.lastMergedStoryId === storyId ? null : state.lastMergedStoryId,
-    })),
+      // 这本独占的照片已经不可见了，时间轴要跟着收
+      timeRange: withReconciledRange(state.timeRange, state.media, stories),
+    });
+  },
 
-  restoreStory: (storyId) =>
-    set((state) => ({
-      stories: state.stories.map((s) =>
-        s.id === storyId ? { ...s, isDeleted: false, updatedAt: nowISO() } : s,
-      ),
-    })),
+  restoreStory: (storyId) => {
+    const state = get();
+    const stories = state.stories.map((s) =>
+      s.id === storyId ? { ...s, isDeleted: false, updatedAt: nowISO() } : s,
+    );
+    set({
+      stories,
+      // 恢复照片展示之后，原来撑不到的范围要重新扩回来
+      timeRange: withReconciledRange(state.timeRange, state.media, stories),
+    });
+  },
+
+  removeMedia: (mediaIds) => {
+    const state = get();
+    const targets = new Set(
+      state.media.filter((item) => mediaIds.includes(item.id) && !item.removedAt).map((i) => i.id),
+    );
+    // 一张都没命中就完全不写：避免一次无意义的全局通知
+    if (targets.size === 0) return;
+    const removedAt = nowISO();
+    const media = state.media.map((item) =>
+      targets.has(item.id) ? { ...item, removedAt } : item,
+    );
+    set({
+      media,
+      timeRange: withReconciledRange(state.timeRange, media, state.stories),
+    });
+  },
+
+  restoreMedia: (mediaIds) => {
+    const state = get();
+    const targets = new Set(
+      state.media.filter((item) => mediaIds.includes(item.id) && item.removedAt).map((i) => i.id),
+    );
+    if (targets.size === 0) return;
+    const media = state.media.map((item) => {
+      if (!targets.has(item.id)) return item;
+      const next: MediaAsset = { ...item };
+      delete next.removedAt;
+      return next;
+    });
+    set({
+      media,
+      timeRange: withReconciledRange(state.timeRange, media, state.stories),
+    });
+  },
 
   resetToMock: () =>
     set({
@@ -509,6 +589,7 @@ const createAppState: StateCreator<AppState & AppActions> = (set, get) => ({
 
     // 导入的照片可能落在当前时间窗口之外（示例数据 2026-10、真实照片可能是上个月）。
     // 不扩窗口的话，导入成功了却在地图和列表里都看不到，看起来像没导入。
+    // 两步：先把窗口挪到新照片所在那天，再按新的有效照片范围收敛粒度。
     let timeRange = state.timeRange;
     const newestStory = plan.newStories.reduce<Story | null>((latest, story) => {
       if (!latest) return story;
@@ -518,8 +599,9 @@ const createAppState: StateCreator<AppState & AppActions> = (set, get) => ({
       const start = new Date(timeRange.startAt).getTime();
       const end = new Date(timeRange.endAt).getTime();
       const target = new Date(newestStory.startAt).getTime();
-      if (target < start || target > end) timeRange = makeMonthRange(newestStory.startAt);
+      if (target < start || target > end) timeRange = makeRange('day', newestStory.startAt);
     }
+    timeRange = withReconciledRange(timeRange, media, stories);
 
     // 有定位的才需要地图归位；全是未定位照片时不要瞎飞。
     // 不止「新建的地点」——往已有地点里追加照片同样要归位：

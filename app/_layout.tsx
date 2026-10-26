@@ -74,6 +74,8 @@ export default function RootLayout() {
             <Stack.Screen name="visit/[visitId]" />
             <Stack.Screen name="story/[storyId]/index" />
             <Stack.Screen name="story/[storyId]/edit" />
+            {/* App 内回收站：被移除的照片。不看归属，任何一张都能从这里恢复 */}
+            <Stack.Screen name="removed" />
             {/* 真实相册是独立的一条线：不读写 store，删掉这两个 Screen 不影响示例流程 */}
             <Stack.Screen name="library/index" />
             <Stack.Screen name="library/inspect" />

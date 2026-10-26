@@ -4,18 +4,28 @@ import { SymbolView } from 'expo-symbols';
 
 import { resolveMediaSource } from '@/src/data';
 import type { MediaAsset, Place, Story } from '@/src/domain/types';
+import {
+  type MediaVisibility,
+  pickVisibleCover,
+  visibleCount,
+} from '@/src/domain/visibility';
 import { colors, radius, spacing, typography } from '@/src/theme';
-import { formatDay, formatDayKey, formatVisitRange } from '@/src/utils/datetime';
+import { formatDay, formatDayKey } from '@/src/utils/datetime';
 
 /**
  * 杂志封面式故事卡片（规格 §5.5）。
  * coverTitleMode 决定标题叠在照片上还是放在照片下方留白处；
  * 原型阶段用预设值模拟，不做真实构图分析。
+ *
+ * 照片张数和封面都过一遍可见性：封面被移除时回退到第一张还看得见的，
+ * 一张都不剩时给出明确提示，而不是留个灰块让人以为图挂了。
  */
 interface Props {
   story: Story;
   places: Place[];
   media: MediaAsset[];
+  /** 「哪些照片还该显示」的快照，由页面统一算一次传下来 */
+  visibility: MediaVisibility;
   onPress?: () => void;
   /** 选择模式：卡片不再进阅读页，点击只切换选中 */
   selectable?: boolean;
@@ -27,14 +37,20 @@ export function StoryCoverCard({
   story,
   places,
   media,
+  visibility,
   onPress,
   selectable = false,
   selected = false,
   onLongPress,
 }: Props) {
+  const mediaIndex = useMemo(() => new Map(media.map((m) => [m.id, m])), [media]);
   const cover = useMemo(
-    () => media.find((m) => m.id === story.coverMediaId),
-    [media, story.coverMediaId],
+    () => pickVisibleCover(story.mediaIds, story.coverMediaId, mediaIndex, visibility),
+    [mediaIndex, story.coverMediaId, story.mediaIds, visibility],
+  );
+  const visibleTotal = useMemo(
+    () => visibleCount(story.mediaIds, visibility),
+    [story.mediaIds, visibility],
   );
   const placeLabel = useMemo(() => {
     const names = story.placeIds
@@ -52,11 +68,12 @@ export function StoryCoverCard({
       dayOf(story.startAt) === dayOf(story.endAt)
         ? dayOf(story.startAt)
         : `${dayOf(story.startAt)} – ${dayOf(story.endAt)}`;
-    const videos = story.mediaIds.filter((id) => media.find((m) => m.id === id)?.kind === 'video')
-      .length;
-    const countLabel = videos > 0 ? `${story.mediaIds.length} 张 · ${videos} 段视频` : `${story.mediaIds.length} 张`;
+    const visibleItems = story.mediaIds.filter((id) => visibility.visibleIds.has(id));
+    const videos = visibleItems.filter((id) => mediaIndex.get(id)?.kind === 'video').length;
+    const countLabel =
+      videos > 0 ? `${visibleTotal} 张 · ${videos} 段视频` : `${visibleTotal} 张`;
     return `${range} · ${countLabel}`;
-  }, [media, story]);
+  }, [mediaIndex, story, visibility, visibleTotal]);
 
   const isOverlay = story.coverTitleMode === 'overlay';
 
@@ -72,7 +89,13 @@ export function StoryCoverCard({
         {cover ? (
           <Image source={resolveMediaSource(cover.uri)} style={styles.image} resizeMode="cover" />
         ) : (
-          <View style={styles.imageFallback} />
+          // 封面被移除（或这本故事的照片都移除了）时不能留一块空白灰：
+          // 用户分不清是图挂了还是自己移除过
+          <View style={styles.imageFallback}>
+            <Text style={styles.hiddenHint}>
+              {story.mediaIds.length > 0 ? '照片已隐藏' : '还没有照片'}
+            </Text>
+          </View>
         )}
 
         {isOverlay ? (
@@ -153,7 +176,13 @@ const styles = StyleSheet.create({
   },
   selectDotOn: { backgroundColor: colors.accent, borderColor: colors.accent },
   image: { width: '100%', height: '100%' },
-  imageFallback: { flex: 1, backgroundColor: colors.mediaPlaceholder },
+  imageFallback: {
+    flex: 1,
+    backgroundColor: colors.mediaPlaceholder,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hiddenHint: { ...typography.footnote, color: colors.textTertiary },
   overlayLayer: {
     position: 'absolute',
     left: 0,

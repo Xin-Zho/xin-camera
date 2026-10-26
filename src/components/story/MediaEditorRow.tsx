@@ -13,6 +13,9 @@ import { formatClock } from '@/src/utils/datetime';
  *  - 点行进整行 → 设为封面
  *  - 星标 → 重点照片（阅读页可据此加重）
  *  - 上下箭头 → 调顺序
+ *
+ * 已从回忆相册移除的照片**仍然列出**：编辑页是唯一能看到"这本到底有哪些照片"的地方，
+ * 直接抽掉会让用户以为照片被删了。它们变淡、不能设封面，第二行写明原因。
  */
 interface Props {
   media: MediaAsset;
@@ -20,6 +23,10 @@ interface Props {
   total: number;
   isCover: boolean;
   isHighlighted: boolean;
+  /** 已从回忆相册移除（或被故事删除连带隐藏） */
+  hidden?: boolean;
+  /** 隐藏原因的文案，默认「已从回忆相册移除」 */
+  hiddenLabel?: string;
   /**
    * 回调统一带 mediaId 参数，而不是在父级用内联箭头函数包住。
    * 这样父级可以把回调做成稳定引用，memo 才真的生效
@@ -36,6 +43,8 @@ export const MediaEditorRow = memo(function MediaEditorRow({
   total,
   isCover,
   isHighlighted,
+  hidden = false,
+  hiddenLabel = '已从回忆相册移除',
   onSetCover,
   onToggleHighlight,
   onMove,
@@ -47,15 +56,20 @@ export const MediaEditorRow = memo(function MediaEditorRow({
   return (
     <Pressable
       onPress={() => onSetCover(media.id)}
+      disabled={hidden}
       style={[styles.row, isCover && styles.rowCover]}
-      accessibilityLabel={`第 ${index + 1} 张，${isCover ? '当前封面' : '未设为封面'}，点按设为封面`}>
+      accessibilityLabel={`第 ${index + 1} 张，${hidden ? hiddenLabel : isCover ? '当前封面' : '未设为封面'}，点按设为封面`}>
       <View style={styles.thumbWrap}>
         {source ? (
-          <Image source={source} style={styles.thumb} resizeMode="cover" />
+          <Image
+            source={source}
+            style={[styles.thumb, hidden && styles.thumbHidden]}
+            resizeMode="cover"
+          />
         ) : (
           <View style={[styles.thumb, styles.thumbFallback]} />
         )}
-        {isCover ? (
+        {isCover && !hidden ? (
           <View style={styles.coverBadge}>
             <Text style={styles.coverBadgeText} allowFontScaling={false}>
               封面
@@ -69,8 +83,10 @@ export const MediaEditorRow = memo(function MediaEditorRow({
           第 {index + 1} 张 · {formatClock(media.capturedAt)}
           {media.kind === 'video' ? ' · 视频' : ''}
         </Text>
-        <Text style={[styles.line2, isCover && styles.line2Active]} numberOfLines={1}>
-          {isCover ? '当前封面' : '点按设为封面'}
+        <Text
+          style={[styles.line2, isCover && !hidden && styles.line2Active, hidden && styles.line2Hidden]}
+          numberOfLines={1}>
+          {hidden ? hiddenLabel : isCover ? '当前封面' : '点按设为封面'}
         </Text>
       </View>
 
@@ -140,6 +156,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.mediaPlaceholder,
   },
   thumb: { width: '100%', height: '100%' },
+  thumbHidden: { opacity: 0.35 },
   thumbFallback: { backgroundColor: colors.mediaPlaceholder },
   coverBadge: {
     position: 'absolute',
@@ -155,6 +172,7 @@ const styles = StyleSheet.create({
   line1: { ...typography.footnote, color: colors.textPrimary },
   line2: { ...typography.caption, color: colors.textTertiary },
   line2Active: { color: colors.accent },
+  line2Hidden: { color: colors.danger },
   starButton: {
     width: 32,
     height: 32,

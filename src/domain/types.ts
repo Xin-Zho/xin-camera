@@ -45,6 +45,17 @@ export interface MediaAsset {
   dateKey?: string;
   /** 归属日是怎么定的，便于回溯；导入后不改 */
   dateSource?: DateSourceKind;
+  /**
+   * 用户「从回忆相册移除」这一张的时刻。
+   *
+   * 刻意**不删除**媒体、也不从 `story.mediaIds` / `visit.mediaIds` 里摘掉：
+   *  1. 移除要能恢复，顺序和封面位置都得原样回来，删引用就等于把顺序丢了；
+   *  2. 「哪些照片还该显示」只能有一个开关。多存一处状态就会多一处对不上的可能。
+   *
+   * 存时刻而不是布尔值，是为了回收站能按移除时间倒序排。
+   * 它**不影响 iPhone 系统相册里的原图**，只在本 App 内隐藏。
+   */
+  removedAt?: string;
 }
 
 export interface GeoPoint {

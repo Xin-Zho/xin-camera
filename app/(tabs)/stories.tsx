@@ -5,7 +5,13 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { StoryCoverCard } from '@/src/components/story/StoryCoverCard';
-import { selectActiveStories, selectDeletedStories, groupStoriesByDay } from '@/src/store/selectors';
+import { hideReasonOf } from '@/src/domain/visibility';
+import {
+  selectActiveStories,
+  selectDeletedStories,
+  groupStoriesByDay,
+  selectVisibility,
+} from '@/src/store/selectors';
 import { useAppStore } from '@/src/store/appStore';
 import { colors, layout, radius, spacing, typography } from '@/src/theme';
 import { dayLabelOf, formatGroupHeaderKey } from '@/src/utils/datetime';
@@ -28,6 +34,13 @@ export default function StoriesScreen() {
   const active = useMemo(() => selectActiveStories(stories), [stories]);
   const deleted = useMemo(() => selectDeletedStories(stories), [stories]);
   const groups = useMemo(() => groupStoriesByDay(active), [active]);
+
+  /**
+   * 卡片上的封面、张数都按「还剩哪些照片」来算。
+   * 删掉故事之后，它独占的照片会从地图和时间轴消失，卡片上的张数也应该跟着变——
+   * 不然用户会觉得"删了但好像没删"。
+   */
+  const visibility = useMemo(() => selectVisibility(media, stories), [stories, media]);
 
   const exitSelection = useCallback(() => {
     setSelecting(false);
@@ -123,6 +136,7 @@ export default function StoriesScreen() {
                 story={story}
                 places={places}
                 media={media}
+                visibility={visibility}
                 selectable={selecting}
                 selected={selectedIds.includes(story.id)}
                 onLongPress={() =>
@@ -140,8 +154,14 @@ export default function StoriesScreen() {
 
         {active.length === 0 ? (
           <View style={styles.empty}>
-            <Text style={styles.emptyTitle}>还没有故事</Text>
-            <Text style={styles.emptyText}>地图上点开一个地点，就会有一次到访的开始。</Text>
+            <Text style={styles.emptyTitle}>
+              {deleted.length > 0 ? '目前没有故事' : '还没有故事'}
+            </Text>
+            <Text style={styles.emptyText}>
+              {deleted.length > 0
+                ? `已删除的 ${deleted.length} 本还在下面，恢复之后照片会回到地图和时间轴。`
+                : '地图上点开一个地点，就会有一次到访的开始。'}
+            </Text>
           </View>
         ) : null}
 
@@ -153,21 +173,31 @@ export default function StoriesScreen() {
               </Text>
             </Pressable>
             {showDeleted
-              ? deleted.map((story) => (
-                  <View key={story.id} style={styles.deletedRow}>
-                    <View style={styles.deletedInfo}>
-                      <Text style={styles.deletedTitle} numberOfLines={1}>
-                        {story.title}
-                      </Text>
-                      <Text style={styles.deletedMeta}>
-                        {dayLabelOf(story)} · 地点和照片都还在
-                      </Text>
+              ? deleted.map((story) => {
+                  // 只有"因为这本被删才看不见"的照片才需要提示；
+                  // 被其他故事共用的照片仍然显示，说成隐藏反而是错的
+                  const hidden = story.mediaIds.filter(
+                    (id) => hideReasonOf(visibility, id) === 'story-deleted',
+                  ).length;
+                  return (
+                    <View key={story.id} style={styles.deletedRow}>
+                      <View style={styles.deletedInfo}>
+                        <Text style={styles.deletedTitle} numberOfLines={1}>
+                          {story.title}
+                        </Text>
+                        <Text style={styles.deletedMeta}>
+                          {dayLabelOf(story)} ·{' '}
+                          {hidden > 0
+                            ? `${hidden} 张照片已从地图和时间轴隐藏`
+                            : '照片仍被其他故事使用'}
+                        </Text>
+                      </View>
+                      <Pressable onPress={() => restoreStory(story.id)} hitSlop={8}>
+                        <Text style={styles.restoreText}>恢复</Text>
+                      </Pressable>
                     </View>
-                    <Pressable onPress={() => restoreStory(story.id)} hitSlop={8}>
-                      <Text style={styles.restoreText}>恢复</Text>
-                    </Pressable>
-                  </View>
-                ))
+                  );
+                })
               : null}
           </View>
         ) : null}

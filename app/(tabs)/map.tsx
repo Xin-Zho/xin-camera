@@ -26,10 +26,14 @@ import {
   planClusterPress,
   type Viewport,
 } from '@/src/domain/clustering';
-import { buildMonthTicks, monthKey } from '@/src/domain/timeline';
+import { buildTimelineTicks, rangeKeyOf } from '@/src/domain/timeline';
 import type { PlaceSummary } from '@/src/domain/types';
 import { useAppStore } from '@/src/store/appStore';
-import { selectPlaceSummaries } from '@/src/store/selectors';
+import {
+  selectMapPlaceSummaries,
+  selectMediaSpan,
+  selectVisibility,
+} from '@/src/store/selectors';
 import { colors, layout, radius, spacing, typography } from '@/src/theme';
 import { dayLabelOf, formatVisitRange, partOfDayOf } from '@/src/utils/datetime';
 
@@ -44,6 +48,7 @@ export default function MapScreen() {
   const places = useAppStore((s) => s.places);
   const visits = useAppStore((s) => s.visits);
   const media = useAppStore((s) => s.media);
+  const stories = useAppStore((s) => s.stories);
   const timeRange = useAppStore((s) => s.timeRange);
   const setSelectedTimeRange = useAppStore((s) => s.setSelectedTimeRange);
   const selectedPlaceId = useAppStore((s) => s.selectedPlaceId);
@@ -51,45 +56,45 @@ export default function MapScreen() {
 
   const [mapReady, setMapReady] = useState(false);
 
+  /**
+   * 「哪些照片还该显示」的唯一判定。删故事、移除照片之后地图要立刻跟着变，
+   * 靠的就是这一层派生——不在任何地方另写一套筛选。
+   */
+  const visibility = useMemo(() => selectVisibility(media, stories), [stories, media]);
+
   const summaries = useMemo(
     () =>
-      // 未定位的照片收在一处，没有坐标，不能上地图——否则会被画到 (0,0)
-      selectPlaceSummaries(places, visits, media, timeRange).filter(
-        (summary) => !summary.place.unlocated,
-      ),
-    [places, visits, media, timeRange],
+      // 未定位的照片收在一处（没有坐标，画出来会落在几内亚湾）；
+      // 一张可见照片都没有的地点也直接隐藏——故事删干净后地图上不该还留着标记
+      selectMapPlaceSummaries(places, visits, media, timeRange, visibility),
+    [places, visits, media, timeRange, visibility],
   );
 
-  const ticks = useMemo(() => {
-    const sorted = [...visits].sort(
-      (a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
-    );
-    const first = sorted[0]?.startAt ?? '2025-01-01T00:00:00+08:00';
-    const last = sorted[sorted.length - 1]?.startAt ?? '2026-12-01T00:00:00+08:00';
-    return buildMonthTicks(first, last);
-  }, [visits]);
+  /** 时间轴范围只由有效照片决定；一张都不剩时为 null，页面走空状态 */
+  const span = useMemo(() => selectMediaSpan(media, visibility), [media, visibility]);
+
+  const ticks = useMemo(() => (span ? buildTimelineTicks(span) : []), [span]);
 
   const activeIndex = useMemo(() => {
-    const key = monthKey(timeRange.startAt);
+    if (ticks.length === 0) return 0;
+    const key = rangeKeyOf(timeRange);
     const index = ticks.findIndex((t) => t.key === key);
     return index >= 0 ? index : ticks.length - 1;
-  }, [ticks, timeRange.startAt]);
+  }, [ticks, timeRange]);
 
   const initialRegion = useMemo<MapRegion>(() => {
-    const newest = [...visits]
-      .filter((visit) => !places.find((p) => p.id === visit.placeId)?.unlocated)
-      .sort((a, b) => new Date(b.startAt).getTime() - new Date(a.startAt).getTime())[0];
-    const place =
-      places.find((p) => p.id === newest?.placeId) ??
-      places.find((p) => !p.unlocated) ??
-      places[0];
+    // 优先当前时段内有内容的地点，其次任何一个还有照片的地点。
+    // 这个值只在地图首次挂载时生效，之后由拖动和归位控制。
+    const withContent =
+      summaries.find((item) => item.visitCountInRange > 0) ?? summaries[0];
+    const place = withContent?.place ?? places.find((p) => !p.unlocated);
     return {
       latitude: place?.coordinate.latitude ?? 22.5431,
       longitude: place?.coordinate.longitude ?? 114.0579,
       latitudeDelta: FOCUS_DELTA * 2.4,
       longitudeDelta: FOCUS_DELTA * 2.4,
     };
-  }, [places, visits]);
+  }, [places, summaries]);
 
   /**
    * 地图可视区域与像素尺寸。聚合判据是"屏幕上两个标记的距离"，
@@ -258,8 +263,8 @@ export default function MapScreen() {
     (index: number) => {
       const tick = ticks[index];
       if (!tick) return;
-      const fresh = selectPlaceSummaries(places, visits, media, tick.range)
-        .filter((s) => s.visitCountInRange > 0 && !s.place.unlocated)
+      const fresh = selectMapPlaceSummaries(places, visits, media, tick.range, visibility)
+        .filter((s) => s.visitCountInRange > 0)
         .sort(
           (a, b) =>
             b.visitCountInRange - a.visitCountInRange ||
@@ -268,7 +273,7 @@ export default function MapScreen() {
         );
       if (fresh[0]) followRef.current(fresh[0]);
     },
-    [media, places, ticks, visits],
+    [media, places, ticks, visibility, visits],
   );
 
   const selectedSummary = summaries.find((s) => s.place.id === selectedPlaceId);
@@ -318,12 +323,18 @@ export default function MapScreen() {
         })}
       </MapView>
 
-      <TimelineRail
-        ticks={ticks}
-        activeIndex={activeIndex}
-        onIndexChange={handleTimelineChange}
-        onRelease={handleTimelineRelease}
-      />
+      {/*
+        一张可见照片都没有时不再画时间轴：刻度范围本来就没有内容，
+        留一条拖不动的滑轨只会让人以为是加载失败。
+      */}
+      {ticks.length > 0 ? (
+        <TimelineRail
+          ticks={ticks}
+          activeIndex={activeIndex}
+          onIndexChange={handleTimelineChange}
+          onRelease={handleTimelineRelease}
+        />
+      ) : null}
 
       <Pressable
         onPress={() => router.push('/settings')}
@@ -378,11 +389,19 @@ export default function MapScreen() {
       ) : null}
 
       {/*
-        底部提示和地点卡片占同一个位置：一次只出现一个。
+        底部提示、空状态、地点卡片占同一个位置：一次只出现一个。
         这里不叠加 insets.bottom —— 底部 tab bar 已经吃掉安全区，
         再加一次会让卡片凭空浮高，也正是卡片会压住时间轴下段的原因。
       */}
-      {selectedSummary ? null : (
+      {ticks.length === 0 ? (
+        <View style={[styles.emptyPanel, { bottom: spacing.sm }]}>
+          <Text style={styles.emptyTitle}>这里还没有回忆</Text>
+          <Text style={styles.emptyText}>
+            {visibility.counts.total} 张照片都不再显示。故事页的「已删除」可以恢复故事，
+            设置里的「已移除的照片」可以恢复被移除的照片。
+          </Text>
+        </View>
+      ) : selectedSummary ? null : (
         <View style={[styles.legend, { bottom: spacing.sm }]}>
           <Text style={styles.legendText}>缩小看合并 · 拖动右侧时间轴浏览回忆</Text>
         </View>
@@ -440,4 +459,19 @@ const styles = StyleSheet.create({
   placeCardHint: { ...typography.caption, color: colors.textTertiary },
   legend: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
   legendText: { ...typography.caption, color: colors.textTertiary },
+  emptyPanel: {
+    position: 'absolute',
+    left: spacing.lg,
+    right: spacing.lg,
+    gap: spacing.xs,
+    padding: spacing.lg,
+    borderRadius: radius.xl,
+    backgroundColor: colors.surface,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  emptyTitle: { ...typography.headline, color: colors.textPrimary },
+  emptyText: { ...typography.footnote, color: colors.textSecondary, lineHeight: 19 },
 });

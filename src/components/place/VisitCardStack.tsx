@@ -11,6 +11,11 @@ import {
 
 import { resolveMediaSource } from '@/src/data';
 import type { MediaAsset, Place, Visit } from '@/src/domain/types';
+import {
+  type MediaVisibility,
+  pickVisibleCover,
+  visibleCount,
+} from '@/src/domain/visibility';
 import { colors, layout, radius, spacing, typography } from '@/src/theme';
 import {
   formatClock,
@@ -25,11 +30,15 @@ import {
  * 地点到访卡片堆叠（规格 §5.4）。
  * 一张卡 = 一次到访，不是一张照片。当前选中的在最前面，
  * 后面的卡片只露出一点点边，暗示"这里还有别的到访"。
+ *
+ * 传进来的 `visits` 已经过滤掉"一张可见照片都不剩"的到访——
+ * 那种卡片点进去是空图库，不如不显示。封面和张数同样走可见性回退。
  */
 interface Props {
   place: Place;
   visits: Visit[];
   media: MediaAsset[];
+  visibility: MediaVisibility;
   onOpenVisit: (visitId: string) => void;
 }
 
@@ -38,9 +47,13 @@ const CARD_WIDTH = SCREEN_WIDTH - layout.screenPadding * 2 - 12;
 const CARD_HEIGHT = Math.round(CARD_WIDTH * 1.24);
 const STACK_GAP = 40;
 
-export function VisitCardStack({ place, visits, media, onOpenVisit }: Props) {
-  const [active, setActive] = useState(0);
+export function VisitCardStack({ place, visits, media, visibility, onOpenVisit }: Props) {
+  const [activeRaw, setActive] = useState(0);
   const mediaIndex = useMemo(() => new Map(media.map((m) => [m.id, m])), [media]);
+
+  // 到访里有照片被移除后，列表会变短，旧的选中索引可能越界。
+  // 夹一下比让卡片堆整个空掉好。
+  const active = Math.min(activeRaw, Math.max(0, visits.length - 1));
 
   const pan = useMemo(
     () =>
@@ -58,7 +71,7 @@ export function VisitCardStack({ place, visits, media, onOpenVisit }: Props) {
   if (visits.length === 0) {
     return (
       <View style={styles.empty}>
-        <Text style={styles.emptyText}>这里还没有到访记录。</Text>
+        <Text style={styles.emptyText}>这里还没有可看的照片。</Text>
       </View>
     );
   }
@@ -71,11 +84,15 @@ export function VisitCardStack({ place, visits, media, onOpenVisit }: Props) {
           // 只渲染当前及后面 3 张，避免堆太深
           return null;
         }
-        const cover = mediaIndex.get(visit.coverMediaId);
+        const cover = pickVisibleCover(
+          visit.mediaIds,
+          visit.coverMediaId,
+          mediaIndex,
+          visibility,
+        );
         const source = cover ? resolveMediaSource(cover.uri) : undefined;
-        const videoCount = visit.mediaIds.filter(
-          (id) => mediaIndex.get(id)?.kind === 'video',
-        ).length;
+        const visibleIds = visit.mediaIds.filter((id) => visibility.visibleIds.has(id));
+        const videoCount = visibleIds.filter((id) => mediaIndex.get(id)?.kind === 'video').length;
         const isActive = depth === 0;
         // 导入的到访带 dateKey：日期、时段、时刻都按拍摄地口径显示，不看设备时区
         const dayLabel = visit.dateKey ? formatDayKey(visit.dateKey) : formatDay(visit.startAt);
@@ -120,7 +137,7 @@ export function VisitCardStack({ place, visits, media, onOpenVisit }: Props) {
                 </Text>
                 <Text style={styles.cardMeta}>
                   {clockOf(visit.startAt)} – {clockOf(visit.endAt)} ·{' '}
-                  {visit.mediaIds.length} 张
+                  {visibleCount(visit.mediaIds, visibility)} 张
                   {videoCount > 0 ? ` · ${videoCount} 段视频` : ''}
                 </Text>
               </View>

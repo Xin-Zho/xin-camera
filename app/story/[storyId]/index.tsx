@@ -15,7 +15,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { resolveMediaSource } from '@/src/data';
 import type { MediaAsset, Story } from '@/src/domain/types';
-import { selectStoryById } from '@/src/store/selectors';
+import { visibleMediaOf } from '@/src/domain/visibility';
+import { selectStoryById, selectVisibility } from '@/src/store/selectors';
 import { useAppStore } from '@/src/store/appStore';
 import { colors, editorialTypography, layout, radius, spacing, typography } from '@/src/theme';
 import {
@@ -94,13 +95,15 @@ export default function StoryReaderScreen() {
   const [leaving, setLeaving] = useState<Story | null>(null);
   const story = selectStoryById(stories, storyId ?? null) ?? leaving;
 
+  const visibility = useMemo(() => selectVisibility(media, stories), [stories, media]);
+
   const items = useMemo(() => {
     if (!story) return [];
     const index = new Map(media.map((m) => [m.id, m]));
-    return story.mediaIds
-      .map((id) => index.get(id))
-      .filter((m): m is MediaAsset => Boolean(m));
-  }, [media, story]);
+    // 已从回忆相册移除的照片不再出现在阅读页。这里不留占位——
+    // 阅读页是"看回忆"的地方，留一排灰格子只会打断它
+    return visibleMediaOf(story.mediaIds, index, visibility);
+  }, [media, story, visibility]);
 
   const rows = useMemo(() => (story ? buildRows(story, items) : []), [items, story]);
   const highlightedSet = useMemo(() => new Set(story?.highlightedMediaIds ?? []), [story]);
@@ -199,6 +202,18 @@ export default function StoryReaderScreen() {
       <View style={styles.rule} />
 
       <View style={styles.flow}>
+        {rows.length === 0 ? (
+          <View style={styles.noMediaBox}>
+            <Text style={styles.noMediaTitle}>
+              {story.mediaIds.length > 0 ? '这本的照片都隐藏了' : '这本还没有照片'}
+            </Text>
+            <Text style={styles.noMediaText}>
+              {story.mediaIds.length > 0
+                ? '可能是从回忆相册移除了，也可能所在故事被删。设置里的「已移除的照片」可以恢复。'
+                : '进入编辑可以换个版式，照片要等下一次到访。'}
+            </Text>
+          </View>
+        ) : null}
         {rows.map((row, index) => {
           if (row.kind === 'full') {
             const source = resolveMediaSource(row.item.uri);
@@ -265,7 +280,7 @@ export default function StoryReaderScreen() {
           ? ` · 由 ${story.mergedFromStoryIds.length} 本合并而成`
           : ''}
         {story.highlightedMediaIds.length > 0
-          ? ` · 精选 ${story.highlightedMediaIds.length} 张`
+          ? ` · 精选 ${items.filter((m) => highlightedSet.has(m.id)).length} 张`
           : ''}
       </Text>
     </ScrollView>
@@ -346,6 +361,9 @@ const styles = StyleSheet.create({
     marginVertical: spacing.xl,
   },
   flow: { gap: spacing.sm },
+  noMediaBox: { paddingVertical: spacing.xxl, gap: spacing.xs },
+  noMediaTitle: { ...typography.headline, color: colors.textPrimary },
+  noMediaText: { ...typography.footnote, color: colors.textSecondary, lineHeight: 19 },
   fullBlock: { alignSelf: 'center', marginBottom: spacing.sm, position: 'relative' },
   fullImage: { width: '100%', height: '100%', borderRadius: radius.media },
   // flex-start：让每个格子高度等于图片自身高度。默认 stretch 会把矮图那一格拉高，

@@ -205,8 +205,11 @@ const styles = StyleSheet.create({
   thumb: {
     position: 'absolute',
     bottom: 0,
-    width: THUMB,
+    // 按日展示时刻度标签是「10月12日」，固定 26 的圆放不下，
+    // 改成可横向撑开的胶囊；短标签（2026 / 10月）仍然是最小圆形宽度
+    minWidth: THUMB,
     height: THUMB,
+    paddingHorizontal: 6,
     marginBottom: -THUMB / 2,
     borderRadius: radius.pill,
     backgroundColor: colors.textPrimary,

@@ -1,10 +1,10 @@
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { mockMedia, mockPlaces, mockVisits } from '@/src/data';
 import { STORE_KEY, STORE_VERSION, useAppStore } from '@/src/store/appStore';
-import { selectActiveStories } from '@/src/store/selectors';
+import { selectActiveStories, selectRemovedMedia, selectVisibility } from '@/src/store/selectors';
 import { describeStorageIssue, readQuarantine } from '@/src/store/storage';
 import { colors, layout, radius, spacing, typography } from '@/src/theme';
 
@@ -66,6 +66,12 @@ export default function SettingsScreen() {
   const importedMedia = media.filter((m) => m.origin === 'library').length;
   const importedStories = stories.filter((s) => s.origin === 'library').length;
 
+  // 可见性快照：设置页要显示「N 张隐藏」这类数字，必须和地图、图库用同一套判定
+  const visibility = useMemo(() => selectVisibility(media, stories), [stories, media]);
+  const removedCount = useMemo(() => selectRemovedMedia(media, visibility).length, [media, visibility]);
+  const visibleTotal = visibility.counts.visible;
+  const hiddenTotal = visibility.counts.total - visibleTotal;
+
   // 隔离存档只在这里用来决定「要不要显示那一行」，内容在专门页面里看
   const [quarantineBytes, setQuarantineBytes] = useState<number | null>(null);
   useEffect(() => {
@@ -123,6 +129,32 @@ export default function SettingsScreen() {
           ) : null}
         </View>
       ) : null}
+
+      <Text style={styles.sectionTitle}>回忆相册</Text>
+      <View style={styles.card}>
+        <Row
+          label="现在能看到的照片"
+          value={`${visibleTotal} 张`}
+          hint={
+            hiddenTotal === 0
+              ? '地图、时间轴和图库都按这个数算'
+              : visibleTotal === 0
+                ? `全部 ${hiddenTotal} 张都隐藏了；删掉的故事和移除的照片都能恢复`
+                : `另有 ${hiddenTotal} 张不显示：故事删了，或者从图库移除了`
+          }
+        />
+        <View style={styles.divider} />
+        <ActionRow
+          label="已移除的照片"
+          hint={
+            removedCount > 0
+              ? `${removedCount} 张 · 不删 iPhone 原图，可逐张或全部恢复`
+              : '没有从图库移除过照片'
+          }
+          tone="accent"
+          onPress={() => router.push('/removed')}
+        />
+      </View>
 
       <Text style={styles.sectionTitle}>真实相册</Text>
       <View style={styles.card}>

@@ -16,8 +16,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SegmentedControl } from '@/src/components/common/SegmentedControl';
 import { MediaEditorRow } from '@/src/components/story/MediaEditorRow';
 import type { CoverTitleMode, StoryLayout } from '@/src/domain/types';
+import {
+  describeHideReason,
+  hideReasonOf,
+  pickVisibleCover,
+  visibleCount,
+} from '@/src/domain/visibility';
 import { useAppStore } from '@/src/store/appStore';
-import { selectMediaByIds } from '@/src/store/selectors';
+import { selectMediaByIds, selectVisibility } from '@/src/store/selectors';
 import { colors, layout, radius, spacing, typography } from '@/src/theme';
 
 const LAYOUT_OPTIONS: { value: StoryLayout; label: string }[] = [
@@ -103,6 +109,7 @@ export default function StoryEditScreen() {
 
   const story = useAppStore((s) => s.stories.find((x) => x.id === id));
   const media = useAppStore((s) => s.media);
+  const stories = useAppStore((s) => s.stories);
 
   const setStoryTitle = useAppStore((s) => s.setStoryTitle);
   const setStoryText = useAppStore((s) => s.setStoryText);
@@ -121,6 +128,24 @@ export default function StoryEditScreen() {
   const items = useMemo(
     () => (story ? selectMediaByIds(media, story.mediaIds) : []),
     [media, story],
+  );
+
+  const visibility = useMemo(() => selectVisibility(media, stories), [stories, media]);
+
+  /**
+   * 实际被当成封面的那张。
+   * `story.coverMediaId` 可能指向一张已移除的照片——阅读页会回退到第一张可见的，
+   * 编辑页的「封面」标记必须落在同一张上，否则两处会指着不同的照片。
+   */
+  const effectiveCoverId = useMemo(() => {
+    if (!story) return undefined;
+    const index = new Map(media.map((m) => [m.id, m]));
+    return pickVisibleCover(story.mediaIds, story.coverMediaId, index, visibility)?.id;
+  }, [media, story, visibility]);
+
+  const hiddenCount = useMemo(
+    () => (story ? story.mediaIds.length - visibleCount(story.mediaIds, visibility) : 0),
+    [story, visibility],
   );
 
   // 稳定引用，才能让 MediaEditorRow 的 memo 真的生效（避免打字时照片行全部重渲染）
@@ -248,22 +273,33 @@ export default function StoryEditScreen() {
           <View style={styles.section}>
             <View style={styles.mediaHeader}>
               <Text style={styles.sectionLabel}>照片</Text>
-              <Text style={styles.mediaCount}>{items.length} 张</Text>
+              <Text style={styles.mediaCount}>
+                {visibleCount(story.mediaIds, visibility)} 张
+                {hiddenCount > 0 ? ` · ${hiddenCount} 张已隐藏` : ''}
+              </Text>
             </View>
             <Text style={styles.hint}>点按设为封面 · 星标是重点照片 · 箭头调顺序</Text>
+            {hiddenCount > 0 ? (
+              <Text style={styles.hiddenHint}>
+                变淡的照片不会出现在地图、图库和阅读页里。移除的可以在设置 →「已移除的照片」中恢复。
+              </Text>
+            ) : null}
 
             <View style={styles.mediaList}>
               {story.mediaIds.map((mediaId, index) => {
                 const item = items.find((m) => m.id === mediaId);
                 if (!item) return null;
+                const reason = hideReasonOf(visibility, mediaId);
                 return (
                   <MediaEditorRow
                     key={mediaId}
                     media={item}
                     index={index}
                     total={story.mediaIds.length}
-                    isCover={story.coverMediaId === mediaId}
+                    isCover={effectiveCoverId === mediaId}
                     isHighlighted={story.highlightedMediaIds.includes(mediaId)}
+                    hidden={reason !== null}
+                    hiddenLabel={reason ? describeHideReason(reason) : undefined}
                     onSetCover={handleSetCover}
                     onToggleHighlight={handleToggleHighlight}
                     onMove={handleMove}
@@ -340,6 +376,12 @@ const styles = StyleSheet.create({
     color: colors.textTertiary,
     marginTop: -spacing.xs,
     marginBottom: spacing.sm,
+  },
+  hiddenHint: {
+    ...typography.caption,
+    color: colors.danger,
+    marginBottom: spacing.sm,
+    lineHeight: 17,
   },
   mediaList: { gap: spacing.xxs },
   footer: {

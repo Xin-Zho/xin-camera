@@ -1,10 +1,23 @@
 import { dayKeyOf, toDate } from '@/src/utils/datetime';
-import { isWithinRange } from '@/src/domain/timeline';
+import { computeMediaSpan, isDayKeyInRange, isWithinRange, type MediaSpan } from '@/src/domain/timeline';
 import type { MediaAsset, Place, PlaceSummary, Story, TimeRange, Visit } from '@/src/domain/types';
+import {
+  buildMediaVisibility,
+  type MediaVisibility,
+  isVisitVisible,
+  pickVisibleCover,
+  visibleCount,
+  visibleMedia,
+  visibleMediaOf,
+} from '@/src/domain/visibility';
 
 /**
  * 纯选择函数：只吃数据、吐结果，不碰 React、不碰 store。
  * 页面和组件都从这里取派生数据，避免各自写一套筛选逻辑。
+ *
+ * 关于 `visibility`：凡是"该显示哪些照片"的问题，一律从 `selectVisibility` 拿快照再传进来，
+ * 默认不传 = 不做可见性过滤。默认值只服务于断言和历史调用点，
+ * **页面必须传**——否则就会出现"故事删了照片还在地图上"这种分裂。
  */
 
 const descByStart = (a: { startAt: string }, b: { startAt: string }) =>
@@ -54,15 +67,54 @@ export function selectMediaByIds(media: MediaAsset[], ids: string[]): MediaAsset
   return ids.map((id) => index.get(id)).filter((m): m is MediaAsset => Boolean(m));
 }
 
-export function selectMediaOfVisit(media: MediaAsset[], visit: Visit): MediaAsset[] {
-  return selectMediaByIds(media, visit.mediaIds).sort(
-    (a, b) => toDate(a.capturedAt).getTime() - toDate(b.capturedAt).getTime(),
-  );
+export function selectMediaOfVisit(
+  media: MediaAsset[],
+  visit: Visit,
+  visibility?: MediaVisibility,
+): MediaAsset[] {
+  const index = new Map(media.map((m) => [m.id, m]));
+  const items = visibility
+    ? visibleMediaOf(visit.mediaIds, index, visibility)
+    : selectMediaByIds(media, visit.mediaIds);
+  return items.sort((a, b) => toDate(a.capturedAt).getTime() - toDate(b.capturedAt).getTime());
 }
 
 export function selectMediaById(media: MediaAsset[], id: string | undefined): MediaAsset | undefined {
   if (!id) return undefined;
   return media.find((m) => m.id === id);
+}
+
+/* ---------------------------------------------------------------- 可见性 */
+
+/**
+ * 有效照片快照。全 App 只在这里算一次，页面用 `useMemo` 缓存住往下传。
+ * 参数顺序刻意与 `buildMediaVisibility(media, stories)` 一致——
+ * 顺序不一致的函数最容易在调用点写反，而这种错不会报错，只会让结果默默不对。
+ */
+export function selectVisibility(media: MediaAsset[], stories: Story[]): MediaVisibility {
+  return buildMediaVisibility(media, stories);
+}
+
+/** 还看得见的照片（全量），保持原顺序 */
+export function selectVisibleMedia(media: MediaAsset[], visibility: MediaVisibility): MediaAsset[] {
+  return visibleMedia(media, visibility);
+}
+
+/** 用户从回忆相册移除的照片，最近移除的在前。回收站与恢复入口用 */
+export function selectRemovedMedia(media: MediaAsset[], visibility: MediaVisibility): MediaAsset[] {
+  return media
+    .filter((item) => visibility.stateOf.get(item.id)?.reason === 'removed')
+    .sort((a, b) => toDate(b.removedAt ?? '').getTime() - toDate(a.removedAt ?? '').getTime());
+}
+
+/** 时间轴该覆盖的范围。没有任何有效照片时返回 null——页面据此显示空状态 */
+export function selectMediaSpan(media: MediaAsset[], visibility: MediaVisibility): MediaSpan | null {
+  return computeMediaSpan(visibleMedia(media, visibility));
+}
+
+/** 一次到访是否落在当前时间窗口。按归属日离散比较，与时间轴刻度同一套口径 */
+export function isVisitInRange(visit: Visit, range: TimeRange): boolean {
+  return isDayKeyInRange(dayKeyOf(visit.startAt, visit.dateKey), range);
 }
 
 /**
@@ -71,16 +123,22 @@ export function selectMediaById(media: MediaAsset[], id: string | undefined): Me
  *  - 代表照片只从**当前时间窗口内**的到访里取，取最近一次到访的封面；
  *  - 窗口内没有到访时，仍返回该地点（canHighlight=false），由地图弱化显示，
  *    不能把它当成"地点不存在"。
+ *
+ * 传了 `visibility` 时：只把「还剩可见照片的到访」算进计数，封面按可见性回退。
+ * 注意它**仍然返回窗口内没有照片的地点**——"这一格暂时没内容"和"这个地点不该出现"
+ * 是两件事，后者由 `selectMapPlaceSummaries` 处理。
  */
 export function selectPlaceSummaries(
   places: Place[],
   visits: Visit[],
   media: MediaAsset[],
   range: TimeRange,
+  visibility?: MediaVisibility,
 ): PlaceSummary[] {
   const mediaIndex = new Map(media.map((m) => [m.id, m]));
+  const pool = visibility ? visits.filter((visit) => isVisitVisible(visit, visibility)) : visits;
   const visitsByPlace = new Map<string, Visit[]>();
-  visits.forEach((v) => {
+  pool.forEach((v) => {
     const list = visitsByPlace.get(v.placeId) ?? [];
     list.push(v);
     visitsByPlace.set(v.placeId, list);
@@ -88,9 +146,20 @@ export function selectPlaceSummaries(
 
   return places.map((place) => {
     const all = (visitsByPlace.get(place.id) ?? []).sort(descByStart);
-    const inRange = all.filter((v) => visitOverlapsRange(v, range));
+    const inRange = all.filter((v) =>
+      visibility ? isVisitInRange(v, range) : visitOverlapsRange(v, range),
+    );
     const latestVisit = inRange[0] ?? all[0];
-    const coverMedia = latestVisit ? mediaIndex.get(latestVisit.coverMediaId) : undefined;
+    const coverMedia = latestVisit
+      ? visibility
+        ? pickVisibleCover(
+            latestVisit.mediaIds,
+            latestVisit.coverMediaId,
+            mediaIndex,
+            visibility,
+          )
+        : mediaIndex.get(latestVisit.coverMediaId)
+      : undefined;
     return {
       place,
       latestVisit,
@@ -98,6 +167,27 @@ export function selectPlaceSummaries(
       visitCountInRange: inRange.length,
     };
   });
+}
+
+/**
+ * 地图上真正要画的标记。
+ *
+ * 比 `selectPlaceSummaries` 多两道过滤：
+ *  - 未定位的照片收在一处，没有坐标，不能上地图（否则会被画到几内亚湾）；
+ *  - **一张可见照片都没有的地点直接隐藏**。
+ *    这一条就是「删除故事后照片从地图消失」的落点：故事删了 → 照片不可见 →
+ *    到访没有可见照片 → 该地点没有 coverMedia → 标记不出现。
+ */
+export function selectMapPlaceSummaries(
+  places: Place[],
+  visits: Visit[],
+  media: MediaAsset[],
+  range: TimeRange,
+  visibility: MediaVisibility,
+): PlaceSummary[] {
+  return selectPlaceSummaries(places, visits, media, range, visibility).filter(
+    (summary) => !summary.place.unlocated && summary.coverMedia !== undefined,
+  );
 }
 
 /** 时间轴里"有回忆"的月份，用于刻度上打点 */
@@ -136,4 +226,9 @@ export function groupStoriesByDay(
 /** 是否落在当前时间窗口内，用于地图高亮判断 */
 export function isStoryInRange(story: Story, range: TimeRange): boolean {
   return isWithinRange(story.startAt, range);
+}
+
+/** 一个地点里还剩多少张可见照片。地点的 mediaIds 是聚合字段，含已被移除的 */
+export function selectPlaceVisibleCount(place: Place, visibility: MediaVisibility): number {
+  return visibleCount(place.mediaIds, visibility);
 }
