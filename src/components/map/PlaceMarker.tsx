@@ -73,6 +73,18 @@ export const PlaceMarker = memo(function PlaceMarker({
     };
   }, [scheduleSettle]);
 
+  // 视觉状态变化（选中描边、到访角标出现/消失）需要重新栅格化一次，
+  // 否则 tracksViewChanges=false 会把旧样子定格住——点了一个地点却看不出选中反馈。
+  // 与 ClusterMarker 的同名 effect 同一套做法。
+  useEffect(() => {
+    setTracksViewChanges(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setTracksViewChanges(false), SETTLE_MS);
+    return () => {
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, [selected, visitCount]);
+
   const source = coverUri ? resolveMediaSource(coverUri) : undefined;
 
   return (

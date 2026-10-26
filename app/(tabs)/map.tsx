@@ -338,7 +338,11 @@ export default function MapScreen() {
 
       <Pressable
         onPress={() => router.push('/settings')}
-        style={[styles.settingsButton, { top: insets.top + spacing.sm }]}
+        style={({ pressed }) => [
+          styles.settingsButton,
+          pressed && styles.pressedSmall,
+          { top: insets.top + spacing.sm },
+        ]}
         hitSlop={8}
         accessibilityLabel="设置">
         <SymbolView
@@ -350,7 +354,11 @@ export default function MapScreen() {
 
       {selectedSummary ? (
         <Pressable
-          style={[styles.placeCard, { bottom: spacing.sm }]}
+          style={({ pressed }) => [
+            styles.placeCard,
+            pressed && styles.pressedCard,
+            { bottom: spacing.sm },
+          ]}
           onPress={() =>
             router.push({
               pathname: '/place/[placeId]',
@@ -403,10 +411,11 @@ export default function MapScreen() {
         </View>
       ) : selectedSummary ? null : (
         <View style={[styles.legend, { bottom: spacing.sm }]}>
-          <Text style={styles.legendText}>缩小看合并 · 拖动右侧时间轴浏览回忆</Text>
+          <View style={styles.legendPill}>
+            <Text style={styles.legendText}>缩小看合并 · 拖动右侧时间轴浏览回忆</Text>
+          </View>
         </View>
       )}
-
       <PlacePickerSheet
         cluster={pickerCluster}
         onSelect={handlePickPlace}
@@ -425,6 +434,9 @@ const styles = StyleSheet.create({
     height: layout.minTouchTarget,
     borderRadius: layout.minTouchTarget / 2,
     backgroundColor: colors.surfaceTranslucent,
+    // 浅色地图上的白色控件靠 hairline 定形（同时间轴胶囊的做法）
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separator,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
@@ -432,6 +444,13 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 3 },
   },
+  /**
+   * 按压反馈：用轻微缩放而不是降透明度——
+   * 白色控件浮在浅色地图上，opacity 往下走只会更接近底图颜色，眼睛读不出变化；
+   * 缩放对任何背景都成立，也是 iOS 浮动控件的常规做法。
+   */
+  pressedSmall: { transform: [{ scale: 0.92 }] },
+  pressedCard: { transform: [{ scale: 0.97 }] },
   placeCard: {
     position: 'absolute',
     left: spacing.lg,
@@ -442,6 +461,8 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     borderRadius: radius.xl,
     backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separator,
     shadowColor: '#000',
     shadowOpacity: 0.1,
     shadowRadius: 16,
@@ -457,8 +478,18 @@ const styles = StyleSheet.create({
   placeCardTitle: { ...typography.headline, color: colors.textPrimary },
   placeCardMeta: { ...typography.footnote, color: colors.textSecondary },
   placeCardHint: { ...typography.caption, color: colors.textTertiary },
+  /** 底部提示：裸文字在浅色地图上读不清，包一层与设置按钮同语言的半透明胶囊 */
   legend: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
-  legendText: { ...typography.caption, color: colors.textTertiary },
+  legendPill: {
+    alignSelf: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceTranslucent,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separator,
+  },
+  legendText: { ...typography.caption, color: colors.textSecondary },
   emptyPanel: {
     position: 'absolute',
     left: spacing.lg,
@@ -467,6 +498,8 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     borderRadius: radius.xl,
     backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separator,
     shadowColor: '#000',
     shadowOpacity: 0.1,
     shadowRadius: 16,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   runOnJS,
   useAnimatedStyle,
@@ -70,6 +71,14 @@ function applyTouchY(
 
 export function TimelineRail({ ticks, activeIndex, onIndexChange, onRelease }: Props) {
   const count = ticks.length;
+  const insets = useSafeAreaInsets();
+
+  /**
+   * 顶部起点至少在设置按钮下方 8pt（按钮占 insets.top + 8 起、44 高），
+   * 同时不低于 120：正常 iPhone 上两者结果一致，只为更大顶部安全区的设备兜底。
+   * 底部 112 是避让地点卡片的既定值，不动（见 v6 文档）。
+   */
+  const wrapperTop = Math.max(insets.top + 60, 120);
 
   const railHeight = useSharedValue(0);
   /**
@@ -144,7 +153,7 @@ export function TimelineRail({ ticks, activeIndex, onIndexChange, onRelease }: P
   const activeTick = ticks[activeIndex];
 
   return (
-    <View style={styles.wrapper} pointerEvents="box-none">
+    <View style={[styles.wrapper, { top: wrapperTop }]} pointerEvents="box-none">
       <GestureDetector gesture={gesture}>
         <View style={styles.track} onLayout={handleLayout}>
           <View style={styles.trackLine} />
@@ -182,7 +191,7 @@ const styles = StyleSheet.create({
   wrapper: {
     position: 'absolute',
     right: spacing.lg,
-    top: 120,
+    // top 由运行时按安全区计算（insets.top + 60 与 120 取大者）
     /**
      * 底部留 112：地图底部的地点卡片大约 86 高、贴着底部 8 摆放，
      * 滑轨必须整体在卡片上方，否则卡片会盖住滑轨下段——
@@ -195,7 +204,8 @@ const styles = StyleSheet.create({
   track: {
     flex: 1,
     width: layout.timelineWidth,
-    marginRight: spacing.sm,
+    // 右缘与设置按钮对齐（按钮 right: spacing.lg），右侧两个悬浮控件共享一条边
+    marginRight: 0,
     borderRadius: radius.pill,
     backgroundColor: colors.surfaceTranslucent,
     paddingVertical: RAIL_INSET,
@@ -212,7 +222,7 @@ const styles = StyleSheet.create({
     top: RAIL_INSET,
     bottom: RAIL_INSET,
     width: 1,
-    backgroundColor: colors.separator,
+    backgroundColor: colors.separatorStrong,
   },
   /**
    * 刻度槽：固定 TICK_SLOT 高、居中放真正的那一小条。
@@ -229,12 +239,14 @@ const styles = StyleSheet.create({
   tickMark: {
     width: 8,
     height: 1,
-    backgroundColor: colors.separatorStrong,
+    // 比 separatorStrong 深一档：上下文刻度要看得见，但不能抢过选中态
+    backgroundColor: colors.textTertiary,
   },
   tickMarkYear: {
     width: 14,
     height: 2,
-    backgroundColor: colors.textTertiary,
+    // 年份刻度是刻度里的最高层级，再深一档
+    backgroundColor: colors.textSecondary,
   },
   tickMarkActive: {
     width: 16,
