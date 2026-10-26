@@ -143,6 +143,7 @@ const styles = StyleSheet.create({
   rowBody: { flex: 1, gap: 1 },
   rowTitle: { ...typography.headline, color: colors.textPrimary },
   rowMeta: { ...typography.footnote, color: colors.textSecondary },
-  rowHint: { ...typography.caption, color: colors.textTertiary },
+  // 同 placeCardHint：12pt 文本在白底上要 ≥4.5:1，textTertiary 只有约 2.7:1
+  rowHint: { ...typography.caption, color: colors.textSecondary },
   chevron: { ...typography.title2, color: colors.textTertiary, marginLeft: spacing.xs },
 });

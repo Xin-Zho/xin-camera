@@ -147,7 +147,14 @@ export function TimelineRail({ ticks, activeIndex, onIndexChange, onRelease }: P
     opacity: railHeight.value > 0 ? 1 : 0,
     transform: [
       { translateY: thumbTranslateY(progress.value, railHeight.value, RAIL_INSET, THUMB_SIZE) },
+      // 拖动中滑块微微放大：手势即时反馈（HIG Gestures），松手即回
+      { scale: dragging.value ? 1.08 : 1 },
     ],
+  }));
+
+  /** 拖动时轨道背板增白一档：控件对操作"有回应"，且不动任何手势/几何逻辑 */
+  const trackBackdropStyle = useAnimatedStyle(() => ({
+    opacity: dragging.value ? 0.35 : 0,
   }));
 
   const activeTick = ticks[activeIndex];
@@ -155,7 +162,12 @@ export function TimelineRail({ ticks, activeIndex, onIndexChange, onRelease }: P
   return (
     <View style={[styles.wrapper, { top: wrapperTop }]} pointerEvents="box-none">
       <GestureDetector gesture={gesture}>
-        <View style={styles.track} onLayout={handleLayout}>
+        <Animated.View style={styles.track} onLayout={handleLayout}>
+          {/* 拖动反馈背板：垫在竖线/刻度/滑块之下，只改自己的透明度 */}
+          <Animated.View
+            pointerEvents="none"
+            style={[StyleSheet.absoluteFill, styles.trackBackdrop, trackBackdropStyle]}
+          />
           <View style={styles.trackLine} />
           {/* 刻度要按像素排，得先知道轨道高度；量到之前空着，一帧都不到 */}
           {layoutHeight > 0
@@ -181,7 +193,7 @@ export function TimelineRail({ ticks, activeIndex, onIndexChange, onRelease }: P
               {activeTick?.label ?? ''}
             </Text>
           </Animated.View>
-        </View>
+        </Animated.View>
       </GestureDetector>
     </View>
   );
@@ -207,14 +219,25 @@ const styles = StyleSheet.create({
     // 右缘与设置按钮对齐（按钮 right: spacing.lg），右侧两个悬浮控件共享一条边
     marginRight: 0,
     borderRadius: radius.pill,
+    borderCurve: 'continuous',
     backgroundColor: colors.surfaceTranslucent,
+    // 白色半透明胶囊浮在浅色地图上，靠这根 hairline 把边缘定形
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separator,
     paddingVertical: RAIL_INSET,
     alignItems: 'center',
     justifyContent: 'center',
+    // 圆角裁掉背板与内容的边角；内容都在轨道盒内，裁切无副作用
+    overflow: 'hidden',
     shadowColor: '#000',
     shadowOpacity: 0.08,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
+  },
+  /** 拖动反馈：白色增量层，rest 时不渲染任何可见变化 */
+  trackBackdrop: {
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface,
   },
   /** 竖线的两端就是刻度的起点与终点，与 RAIL_INSET 同一个内缩 */
   trackLine: {
@@ -222,7 +245,8 @@ const styles = StyleSheet.create({
     top: RAIL_INSET,
     bottom: RAIL_INSET,
     width: 1,
-    backgroundColor: colors.separatorStrong,
+    // 结构线比刻度安静一档；separatorStrong 在白底上只有约 1.3:1，几乎隐形
+    backgroundColor: colors.textTertiary,
   },
   /**
    * 刻度槽：固定 TICK_SLOT 高、居中放真正的那一小条。
@@ -239,14 +263,14 @@ const styles = StyleSheet.create({
   tickMark: {
     width: 8,
     height: 1,
-    // 比 separatorStrong 深一档：上下文刻度要看得见，但不能抢过选中态
-    backgroundColor: colors.textTertiary,
+    // HIG Accessibility：非文本图形 ≥3:1——textTertiary 只有约 2.7:1，再深一档
+    backgroundColor: colors.textSecondary,
   },
   tickMarkYear: {
     width: 14,
     height: 2,
-    // 年份刻度是刻度里的最高层级，再深一档
-    backgroundColor: colors.textSecondary,
+    // 年份刻度是刻度里的最高层级
+    backgroundColor: colors.textPrimary,
   },
   tickMarkActive: {
     width: 16,

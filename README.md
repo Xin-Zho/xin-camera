@@ -32,6 +32,7 @@ Android / iOS / Web 之外的平台没有验证过，Web 上地图不可用（re
 - `docs/v4-import.md` —— 照片导入：切分与去重规则、不覆盖用户编辑、归属日固定、存档 v2
 - `docs/v5-visibility.md` —— 照片可见性：删故事 / 移除照片的共同判定、时间轴动态范围、恢复路径
 - `docs/v6-rail-geometry.md` —— 时间轴几何：刻度 / 滑块 / 拖动共用一套坐标，根因与真机待验项
+- `docs/v7-map-design-review.md` —— 地图首页 HIG 设计审查：对比度红线、拖动反馈、 VoiceOver 标注与遗留项
 - `AGENTS.md` —— 多 agent 协作约定（权威文件、分工边界、版本策略）
 
 ## 目录

@@ -344,6 +344,7 @@ export default function MapScreen() {
           { top: insets.top + spacing.sm },
         ]}
         hitSlop={8}
+        accessibilityRole="button"
         accessibilityLabel="设置">
         <SymbolView
           name={{ ios: 'slider.horizontal.3', android: 'tune', web: 'tune' }}
@@ -359,6 +360,8 @@ export default function MapScreen() {
             pressed && styles.pressedCard,
             { bottom: spacing.sm },
           ]}
+          accessibilityRole="button"
+          accessibilityHint="打开该地点的到访列表"
           onPress={() =>
             router.push({
               pathname: '/place/[placeId]',
@@ -433,6 +436,7 @@ const styles = StyleSheet.create({
     width: layout.minTouchTarget,
     height: layout.minTouchTarget,
     borderRadius: layout.minTouchTarget / 2,
+    borderCurve: 'continuous',
     backgroundColor: colors.surfaceTranslucent,
     // 浅色地图上的白色控件靠 hairline 定形（同时间轴胶囊的做法）
     borderWidth: StyleSheet.hairlineWidth,
@@ -460,6 +464,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     padding: spacing.md,
     borderRadius: radius.xl,
+    borderCurve: 'continuous',
     backgroundColor: colors.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.separator,
@@ -477,7 +482,8 @@ const styles = StyleSheet.create({
   placeCardBody: { flex: 1, gap: 2 },
   placeCardTitle: { ...typography.headline, color: colors.textPrimary },
   placeCardMeta: { ...typography.footnote, color: colors.textSecondary },
-  placeCardHint: { ...typography.caption, color: colors.textTertiary },
+  // HIG Accessibility：≤17pt 文本至少 4.5:1——textTertiary 在白卡上只有约 2.7:1
+  placeCardHint: { ...typography.caption, color: colors.textSecondary },
   /** 底部提示：裸文字在浅色地图上读不清，包一层与设置按钮同语言的半透明胶囊 */
   legend: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
   legendPill: {
@@ -485,6 +491,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     borderRadius: radius.pill,
+    borderCurve: 'continuous',
     backgroundColor: colors.surfaceTranslucent,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.separator,
@@ -497,6 +504,7 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     padding: spacing.lg,
     borderRadius: radius.xl,
+    borderCurve: 'continuous',
     backgroundColor: colors.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.separator,
