@@ -118,6 +118,23 @@ export function isVisitInRange(visit: Visit, range: TimeRange): boolean {
 }
 
 /**
+ * 地点页的到访顺序：**时间轴停在哪，哪次的卡片就在最上面**——不是默认最新。
+ *
+ * 分成两组：当前窗口内的在前、窗口外的在后，组内保持传入顺序（调用方按最新在前排好）。
+ * 稳定分区，不重排组内：窗口选不出的两场到访（比如同一个月里 14 号和 15 号），
+ * 仍然最新的在前——这时「时间轴所选」和「最新」是一回事，不该假装区分。
+ * 窗口口径与时间轴一致：离散日键，跨午夜到访只算开始日。
+ */
+export function orderVisitsForPlace(visits: Visit[], range: TimeRange): Visit[] {
+  const inRange: Visit[] = [];
+  const outOfRange: Visit[] = [];
+  visits.forEach((visit) => {
+    (isVisitInRange(visit, range) ? inRange : outOfRange).push(visit);
+  });
+  return [...inRange, ...outOfRange];
+}
+
+/**
  * 地图标记的数据源（规格 §5.3）：
  *  - 一个 Place 只会产出一个标记；
  *  - 代表照片只从**当前时间窗口内**的到访里取，取最近一次到访的封面；

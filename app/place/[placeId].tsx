@@ -7,6 +7,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { VisitCardStack } from '@/src/components/place/VisitCardStack';
 import { isVisitVisible } from '@/src/domain/visibility';
 import {
+  isVisitInRange,
+  orderVisitsForPlace,
   selectPlaceById,
   selectVisibility,
   selectVisitsOfPlace,
@@ -31,10 +33,11 @@ export default function PlaceScreen() {
   const allVisits = useAppStore((s) => s.visits);
   const media = useAppStore((s) => s.media);
   const stories = useAppStore((s) => s.stories);
+  const timeRange = useAppStore((s) => s.timeRange);
 
   const place = selectPlaceById(places, placeId ?? null);
   const visibility = useMemo(() => selectVisibility(media, stories), [stories, media]);
-  const visits = useMemo(
+  const visibleVisits = useMemo(
     () =>
       place
         ? selectVisitsOfPlace(allVisits, place.id).filter((visit) =>
@@ -43,8 +46,16 @@ export default function PlaceScreen() {
         : [],
     [allVisits, place, visibility],
   );
+  // 时间轴停在哪，哪次的卡片顶到最上面；窗口选不出区别时保持最新在前
+  const visits = useMemo(
+    () => orderVisitsForPlace(visibleVisits, timeRange),
+    [visibleVisits, timeRange],
+  );
 
-  const latest = visits[0];
+  // 只有当分区真的把别的一次顶上来时才说「时间轴所选」，否则还是「最近一次」
+  const top = visits[0];
+  const pinnedByTimeline = top !== undefined && top !== visibleVisits[0];
+  const topLabel = pinnedByTimeline ? '时间轴所选' : '最近一次';
 
   return (
     <ScrollView
@@ -88,12 +99,12 @@ export default function PlaceScreen() {
         </View>
       </View>
 
-      {latest ? (
+      {top ? (
         <Text style={styles.latestLine}>
-          最近一次 ·{' '}
-          {latest.dateKey ? formatDayKeyFull(latest.dateKey) : formatDayFull(latest.startAt)}{' '}
-          {latest.dateKey ? formatWeekdayKey(latest.dateKey) : formatWeekday(latest.startAt)}{' '}
-          {latest.dateKey ? partOfDayLiteral(latest.startAt) : partOfDay(latest.startAt)}
+          {topLabel} ·{' '}
+          {top.dateKey ? formatDayKeyFull(top.dateKey) : formatDayFull(top.startAt)}{' '}
+          {top.dateKey ? formatWeekdayKey(top.dateKey) : formatWeekday(top.startAt)}{' '}
+          {top.dateKey ? partOfDayLiteral(top.startAt) : partOfDay(top.startAt)}
         </Text>
       ) : null}
 
