@@ -3,13 +3,11 @@ import type { ImageSourcePropType } from 'react-native';
 /**
  * 媒体资源解析层。
  *
- * 原型阶段 `MediaAsset.uri` 存的是 `mock:<slug>` 键，不是真实路径，
- * 这样：
- *  1. 类型保持 string，和将来接入真实照片库时一致；
- *  2. require 只能写字面量，集中在这里维护才不会散落各处；
- *  3. 换素材只改这一个文件。
+ * 两种来源：
+ *  1. 示例素材：`MediaAsset.uri` 是 `mock:<slug>` 键，require 只能写字面量，集中在这里维护；
+ *  2. 真实相册导入：uri 是 `file://…`（`Asset.getUri()` 导出的临时副本），直接交给 Image。
  *
- * 第二阶段接入 iOS 照片库后，这里可以退化成直接返回 { uri }。
+ * 真实文件走的是通用分支，不是"特例"：以后换成 App 沙盒内的持久路径也不用改这里。
  */
 const SOURCES: Record<string, ImageSourcePropType> = {
   'mock:bay-a1': require('../../assets/mock/bay-a1.jpg'),
@@ -39,7 +37,13 @@ const SOURCES: Record<string, ImageSourcePropType> = {
 };
 
 export function resolveMediaSource(uri: string): ImageSourcePropType | undefined {
-  return SOURCES[uri];
+  const known = SOURCES[uri];
+  if (known) return known;
+  // 空 uri 表示"导入时没拿到文件"。返回 undefined 让调用方画占位，
+  // 不要返回 { uri: '' } —— RN 会把它当成加载失败，日志里一片红但没有信息量
+  if (!uri) return undefined;
+  if (uri.startsWith('mock:')) return undefined; // 素材改名后失效的旧键，不当真实路径用
+  return { uri };
 }
 
 /** 供数据自检使用 */

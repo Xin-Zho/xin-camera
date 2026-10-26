@@ -5,7 +5,7 @@ import { SymbolView } from 'expo-symbols';
 import { resolveMediaSource } from '@/src/data';
 import type { MediaAsset, Place, Story } from '@/src/domain/types';
 import { colors, radius, spacing, typography } from '@/src/theme';
-import { formatDay, formatVisitRange } from '@/src/utils/datetime';
+import { formatDay, formatDayKey, formatVisitRange } from '@/src/utils/datetime';
 
 /**
  * 杂志封面式故事卡片（规格 §5.5）。
@@ -46,10 +46,12 @@ export function StoryCoverCard({
   }, [places, story.placeIds]);
 
   const meta = useMemo(() => {
+    // 有 dateKey 就按固定的归属日显示，不看设备时区；示例数据没有 dateKey，保持原行为
+    const dayOf = (iso: string) => (story.dateKey ? formatDayKey(story.dateKey) : formatDay(iso));
     const range =
-      formatDay(story.startAt) === formatDay(story.endAt)
-        ? formatDay(story.startAt)
-        : `${formatDay(story.startAt)} – ${formatDay(story.endAt)}`;
+      dayOf(story.startAt) === dayOf(story.endAt)
+        ? dayOf(story.startAt)
+        : `${dayOf(story.startAt)} – ${dayOf(story.endAt)}`;
     const videos = story.mediaIds.filter((id) => media.find((m) => m.id === id)?.kind === 'video')
       .length;
     const countLabel = videos > 0 ? `${story.mediaIds.length} 张 · ${videos} 段视频` : `${story.mediaIds.length} 张`;

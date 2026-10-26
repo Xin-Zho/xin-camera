@@ -206,6 +206,23 @@ export async function resolveThumb(assetId: string): Promise<ThumbState> {
   }
 }
 
+/**
+ * 导入用的原图 uri。拿不到就返回 null——**不抛错**：
+ * 一张照片取不到 uri 不该让整批导入失败，媒体照样入库（列表显示占位），用户还能改。
+ *
+ * 提醒：iOS 上这是临时目录里的副本，系统清理后 uri 会失效。
+ * 原型阶段接受这个代价（见 docs/v4-import.md），正式版应复制进沙盒并长期持有。
+ */
+export async function resolveUri(assetId: string): Promise<string | null> {
+  try {
+    const mod = loadModule();
+    const uri = await new mod.Asset(assetId).getUri();
+    return uri ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** 单个资产的定位。读取失败和"没有定位"分开记。 */
 export async function resolveLocation(assetId: string): Promise<LibraryLocation> {
   try {

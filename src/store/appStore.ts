@@ -15,6 +15,8 @@ import type {
   TimeRange,
   Visit,
 } from '@/src/domain/types';
+import type { ImportCandidate, ImportPlan } from '@/src/library/importPlan';
+import { planLibraryImport } from '@/src/library/importPlan';
 import type { StorageIssue } from '@/src/store/storage';
 import { writeQuarantine } from '@/src/store/storage';
 import { formatDay } from '@/src/utils/datetime';
@@ -23,15 +25,22 @@ import { formatDay } from '@/src/utils/datetime';
  * 全局唯一 store（规格 §8）。
  * 地图页和故事页都必须从这里读，不允许各自维护副本。
  *
- * 持久化策略（v1）：**只持久化 `stories`**。
- * 用户在原型里能改的只有故事这一层——编辑、合并、拆分、删除、恢复全落在 `Story` 上；
- * `places` / `visits` / `media` 是示例数据派生的，每次都从 mock 重建。
- * 这样做的直接好处是：换素材、改 mock 结构不会和旧存档打架，也不会因为
- * 存了 `mock:<slug>` 键而在素材改名后出现空图。接真实相册后再把三层一起存。
+ * 持久化策略（v2）：**四层一起存**（`stories` / `places` / `visits` / `media`）。
+ * v1 只存故事层，因为当时用户能改的只有故事，地点/到访/照片都是示例数据派生的。
+ * 接入真实相册导入之后这条前提不成立了：导入会**新建**地点、到访和媒体，
+ * 不存下来就等于每次重启都丢一次导入。
  *
- * 没进 `partialize` 的字段（`timeRange` / 选中项 / `lastMergedStoryId`）都是瞬态 UI 状态，
- * 重启回到「最近一次回忆所在月份」比恢复上次拖到的位置更符合预期。
+ * 没进 `partialize` 的字段（`timeRange` / 选中项 / `lastMergedStoryId` / `mapFocus`）
+ * 都是瞬态 UI 状态，重启回到「最近一次回忆所在月份」比恢复上次拖到的位置更符合预期。
  */
+
+/** 地图归位请求。导入后把视野带到新照片所在地，否则新地点可能就在屏幕外 */
+export interface MapFocusRequest {
+  latitude: number;
+  longitude: number;
+  /** 自增口令：同一个坐标连续导入两次也要能触发第二次归位 */
+  token: number;
+}
 
 interface AppState {
   places: Place[];
@@ -44,6 +53,8 @@ interface AppState {
   selectedVisitId: string | null;
   /** 最近一次合并产生的故事，用于列表里提示"可拆分" */
   lastMergedStoryId: string | null;
+  /** 导入后要求地图归位一次，消费后由页面清空 */
+  mapFocus: MapFocusRequest | null;
   /**
    * 存档健康状态。不持久化，每次启动由 rehydrate 过程判定。
    * 设置页据此区分「能保存」和「只在本次运行有效」——这两件事对用户的含义完全不同。
@@ -78,6 +89,13 @@ interface AppActions {
   restoreStory: (storyId: string) => void;
   /** 丢掉本地存档，回到示例数据（设置页用） */
   resetToMock: () => void;
+  /**
+   * 导入真实相册照片。规划与切分在 `planLibraryImport` 里算完，这里只负责一次落库：
+   * 要么全进、要么不进，不出现「地点建了照片没进」的中间态。
+   */
+  importLibraryAssets: (candidates: ImportCandidate[]) => ImportPlan;
+  /** 地图归位消费完清掉，避免回来的每次渲染都再飞一次 */
+  clearMapFocus: () => void;
 }
 
 const dedupe = <T,>(items: T[]): T[] => Array.from(new Set(items));
@@ -100,8 +118,9 @@ function mapStory(
     const patch = updater(s);
     if (!patch) return s;
     changed = true;
-    // id 永远不允许被 patch 覆盖
-    return { ...s, ...patch, id: s.id, updatedAt: nowISO() };
+    // id 永远不允许被 patch 覆盖。`editedByUser` 在这里统一打标：
+    // mapStory 的调用方全是用户编辑动作，导入流程不经过它。
+    return { ...s, ...patch, id: s.id, updatedAt: nowISO(), editedByUser: true };
   });
   return changed ? next : stories;
 }
@@ -144,7 +163,8 @@ const initialRange = makeMonthRange(newestStory?.startAt ?? '2026-10-12T12:00:00
 
 /** 存档键与版本。改存档结构时版本 +1，并在 `migrate` 里补一条迁移。 */
 export const STORE_KEY = 'xin-camera-store';
-export const STORE_VERSION = 1;
+/** v2：从「只存故事层」扩到四层（故事 / 地点 / 到访 / 媒体），因为导入会新建后三层 */
+export const STORE_VERSION = 2;
 
 /**
  * 存档结构校验。
@@ -161,6 +181,44 @@ function isValidStory(value: unknown): value is Story {
     Array.isArray(s.placeIds) &&
     typeof s.startAt === 'string' &&
     Number.isFinite(new Date(s.startAt).getTime())
+  );
+}
+
+function isValidPlace(value: unknown): value is Place {
+  if (!value || typeof value !== 'object') return false;
+  const p = value as Partial<Place>;
+  return (
+    typeof p.id === 'string' &&
+    typeof p.name === 'string' &&
+    !!p.coordinate &&
+    Number.isFinite(p.coordinate.latitude) &&
+    Number.isFinite(p.coordinate.longitude) &&
+    Array.isArray(p.mediaIds)
+  );
+}
+
+function isValidVisit(value: unknown): value is Visit {
+  if (!value || typeof value !== 'object') return false;
+  const v = value as Partial<Visit>;
+  return (
+    typeof v.id === 'string' &&
+    typeof v.placeId === 'string' &&
+    typeof v.startAt === 'string' &&
+    typeof v.endAt === 'string' &&
+    Number.isFinite(new Date(v.startAt).getTime()) &&
+    Array.isArray(v.mediaIds)
+  );
+}
+
+function isValidMedia(value: unknown): value is MediaAsset {
+  if (!value || typeof value !== 'object') return false;
+  const m = value as Partial<MediaAsset>;
+  return (
+    typeof m.id === 'string' &&
+    typeof m.uri === 'string' &&
+    typeof m.capturedAt === 'string' &&
+    typeof m.width === 'number' &&
+    typeof m.height === 'number'
   );
 }
 
@@ -188,6 +246,7 @@ const createAppState: StateCreator<AppState & AppActions> = (set, get) => ({
   selectedPlaceId: null,
   selectedVisitId: null,
   lastMergedStoryId: null,
+  mapFocus: null,
   storageIssue: { kind: 'none' },
 
   setSelectedTimeRange: (range) => set({ timeRange: range }),
@@ -199,7 +258,9 @@ const createAppState: StateCreator<AppState & AppActions> = (set, get) => ({
   updateStory: (storyId, patch) =>
     set((state) => ({
       stories: state.stories.map((s) =>
-        s.id === storyId ? { ...s, ...patch, id: s.id, updatedAt: nowISO() } : s,
+        s.id === storyId
+          ? { ...s, ...patch, id: s.id, updatedAt: nowISO(), editedByUser: true }
+          : s,
       ),
     })),
 
@@ -266,7 +327,7 @@ const createAppState: StateCreator<AppState & AppActions> = (set, get) => ({
           orderedMediaIds.length === s.mediaIds.length &&
           orderedMediaIds.every((id) => s.mediaIds.includes(id));
         if (!sameSet) return s;
-        return { ...s, mediaIds: orderedMediaIds, updatedAt: nowISO() };
+        return { ...s, mediaIds: orderedMediaIds, updatedAt: nowISO(), editedByUser: true };
       }),
     })),
 
@@ -281,6 +342,7 @@ const createAppState: StateCreator<AppState & AppActions> = (set, get) => ({
             ? s.highlightedMediaIds.filter((id) => id !== mediaId)
             : [...s.highlightedMediaIds, mediaId],
           updatedAt: nowISO(),
+          editedByUser: true,
         };
       }),
     })),
@@ -371,13 +433,120 @@ const createAppState: StateCreator<AppState & AppActions> = (set, get) => ({
       // 深拷贝：存档对象一旦和模块常量共享引用，后续 patch 会把示例数据一起改掉，
       // 表现是"重置之后看到的还是上次改过的标题"
       stories: JSON.parse(JSON.stringify(mockStories)) as Story[],
+      // 导入产生的三层也要一起清掉，否则会留下没有故事引用的孤儿地点和照片
+      places: JSON.parse(JSON.stringify(mockPlaces)) as Place[],
+      visits: JSON.parse(JSON.stringify(mockVisits)) as Visit[],
+      media: JSON.parse(JSON.stringify(mockMedia)) as MediaAsset[],
       timeRange: initialRange,
       selectedPlaceId: null,
       selectedVisitId: null,
       lastMergedStoryId: null,
+      mapFocus: null,
       // 重置后存档是干净的；存储本身不可用则保持原样，别把这个问题也"重置"掉
       storageIssue: get().storageIssue.kind === 'unavailable' ? get().storageIssue : { kind: 'none' },
     }),
+
+  clearMapFocus: () => set({ mapFocus: null }),
+
+  importLibraryAssets: (candidates) => {
+    const state = get();
+    const plan = planLibraryImport(candidates, {
+      places: state.places,
+      visits: state.visits,
+      media: state.media,
+      stories: state.stories,
+    });
+
+    // 一张新的都没有（全部是已导入过的）就完全不写 store：
+    // 否则会白白刷新一次全部订阅者，还会把 timeRange 之类的瞬态状态搅动一遍
+    if (plan.newMedia.length === 0) return plan;
+
+    const appendByVisit = new Map(plan.appends.map((item) => [item.visitId, item]));
+
+    const visits = state.visits
+      .map((visit) => {
+        const append = appendByVisit.get(visit.id);
+        if (!append) return visit;
+        return {
+          ...visit,
+          mediaIds: dedupe([...visit.mediaIds, ...append.mediaIds]),
+          endAt: append.endAt,
+        };
+      })
+      .concat(plan.newVisits);
+
+    // 追加只发生在「故事没被用户改过」的到访上（由规划层保证），
+    // 所以这里直接补媒体，不动标题、封面、顺序
+    const stories = state.stories
+      .map((story) => {
+        const append = plan.appends.find((item) => item.storyId === story.id);
+        if (!append) return story;
+        const host = visits.find((visit) => visit.id === append.visitId);
+        return {
+          ...story,
+          mediaIds: dedupe([...story.mediaIds, ...append.mediaIds]),
+          endAt: host?.endAt ?? story.endAt,
+          updatedAt: nowISO(),
+        };
+      })
+      .concat(plan.newStories);
+
+    const media = state.media.concat(plan.newMedia);
+
+    // 地点的 mediaIds / visitIds 是聚合字段，这里按底层数据重算，
+    // 不靠规划层维护——两次导入之间最容易出的不一致就是这两列对不上
+    const affected = new Set(plan.affectedPlaceIds);
+    const places = state.places
+      .concat(plan.newPlaces)
+      .map((place) => {
+        if (!affected.has(place.id)) return place;
+        return {
+          ...place,
+          mediaIds: media.filter((item) => item.placeId === place.id).map((item) => item.id),
+          visitIds: visits.filter((visit) => visit.placeId === place.id).map((visit) => visit.id),
+        };
+      });
+
+    // 导入的照片可能落在当前时间窗口之外（示例数据 2026-10、真实照片可能是上个月）。
+    // 不扩窗口的话，导入成功了却在地图和列表里都看不到，看起来像没导入。
+    let timeRange = state.timeRange;
+    const newestStory = plan.newStories.reduce<Story | null>((latest, story) => {
+      if (!latest) return story;
+      return new Date(story.startAt).getTime() > new Date(latest.startAt).getTime() ? story : latest;
+    }, null);
+    if (newestStory) {
+      const start = new Date(timeRange.startAt).getTime();
+      const end = new Date(timeRange.endAt).getTime();
+      const target = new Date(newestStory.startAt).getTime();
+      if (target < start || target > end) timeRange = makeMonthRange(newestStory.startAt);
+    }
+
+    // 有定位的才需要地图归位；全是未定位照片时不要瞎飞。
+    // 不止「新建的地点」——往已有地点里追加照片同样要归位：
+    // 导入可能顺带切换了时间窗口，视野若停在上个月，用户的照片就还在屏幕外。
+    const focusPlace =
+      plan.newPlaces.find((place) => !place.unlocated) ??
+      plan.affectedPlaceIds
+        .map((id) => places.find((place) => place.id === id))
+        .find((place) => place !== undefined && place.unlocated !== true);
+
+    set({
+      stories,
+      visits,
+      media,
+      places,
+      timeRange,
+      mapFocus: focusPlace
+        ? {
+            latitude: focusPlace.coordinate.latitude,
+            longitude: focusPlace.coordinate.longitude,
+            token: (state.mapFocus?.token ?? 0) + 1,
+          }
+        : state.mapFocus,
+    });
+
+    return plan;
+  },
 });
 
 /**
@@ -455,22 +624,55 @@ const safeStorage: StateStorage = {
 };
 
 /**
- * 存档层。只写 `stories`（原因见文件头），其余字段在 rehydrate 时由初始值补齐。
- * `merge` 里做结构校验，存档不合格就整体回退示例数据。
+ * 存档层。v2 存四层；`merge` 里逐层做结构校验。
+ *
+ * 有一条刻意保留的降级路径：v1 存档里没有 places / visits / media 字段（当时只存故事），
+ * 这种存档按旧行为接受故事层，其余三层用示例数据补齐。
+ * 但如果存档**声明了**这几层却一条都读不出来，就不接受——
+ * 那说明存档坏了，用示例地点去配导入故事会得到一堆「未知地点」，比直接回退更糟。
  */
 export const useAppStore = create<AppState & AppActions>()(
   persist(createAppState, {
     name: STORE_KEY,
     version: STORE_VERSION,
     storage: createJSONStorage(() => safeStorage),
-    partialize: (state) => ({ stories: state.stories }),
+    partialize: (state) => ({
+      stories: state.stories,
+      places: state.places,
+      visits: state.visits,
+      media: state.media,
+    }),
     merge: (persisted, current) => {
-      const archive = persisted as { stories?: unknown } | undefined;
+      const archive = persisted as
+        | { stories?: unknown; places?: unknown; visits?: unknown; media?: unknown }
+        | undefined;
       const stories = Array.isArray(archive?.stories)
         ? archive.stories.filter(isValidStory)
         : [];
       // 一条都留不下就当存档不可用：空相册比丢一次编辑更糟，直接回示例数据
-      if (stories.length > 0) return { ...current, stories };
+      if (stories.length > 0) {
+        const hasLayerFields =
+          archive?.places !== undefined || archive?.visits !== undefined || archive?.media !== undefined;
+        const places = Array.isArray(archive?.places) ? archive.places.filter(isValidPlace) : [];
+        const visits = Array.isArray(archive?.visits) ? archive.visits.filter(isValidVisit) : [];
+        const media = Array.isArray(archive?.media) ? archive.media.filter(isValidMedia) : [];
+
+        if (!hasLayerFields) {
+          // v1 存档：只有故事层，按旧行为补齐其余三层
+          return { ...current, stories };
+        }
+        if (places.length === 0 || media.length === 0) {
+          const raw = lastRawArchive ?? JSON.stringify(archive);
+          pendingIssue = {
+            kind: 'archive-empty',
+            detail: `存档里地点 ${places.length} 条、媒体 ${media.length} 条，无法与故事配套`,
+            bytes: raw.length,
+          };
+          void writeQuarantine(raw, STORE_KEY, '存档结构校验未通过');
+          return current;
+        }
+        return { ...current, stories, places, visits, media };
+      }
 
       // 存档确实在、确实有记录，但一条都没通过校验：这不是"没有存档"，是"存档坏了"。
       // 原样备份一份再回示例数据，否则下一次写入就把它盖掉了。
@@ -486,8 +688,8 @@ export const useAppStore = create<AppState & AppActions>()(
       return current;
     },
     migrate: (persisted, version) => {
-      // v1 是第一个带版本号的存档；更早的没有 version 字段，结构一致，直接接受
-      if (version < 1) {
+      // v1（以及没有 version 字段的更早存档）只存故事层，结构一致，直接接受
+      if (version < 2) {
         const archive = persisted as { stories?: unknown } | undefined;
         return Array.isArray(archive?.stories) ? { stories: archive.stories } : {};
       }

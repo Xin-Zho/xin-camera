@@ -13,7 +13,12 @@ import {
 } from '@/src/store/selectors';
 import { useAppStore } from '@/src/store/appStore';
 import { colors, layout, radius, spacing, typography } from '@/src/theme';
-import { formatClock, formatDayFull, formatWeekday, partOfDay } from '@/src/utils/datetime';
+import {
+  clockLabelOf,
+  dayLabelFullOf,
+  partOfDayOf,
+  weekdayLabelOf,
+} from '@/src/utils/datetime';
 
 const COLUMNS = 3;
 const GAP = 3;
@@ -66,12 +71,16 @@ export default function VisitGalleryScreen() {
         </Pressable>
         <View style={styles.headerText}>
           <Text style={styles.title} numberOfLines={1}>
-            {visit ? `${formatDayFull(visit.startAt)} ${partOfDay(visit.startAt)}` : '图库'}
+            {visit
+              ? `${dayLabelFullOf(visit)} ${partOfDayOf(visit)}`
+              : '图库'}
           </Text>
           <Text style={styles.meta} numberOfLines={1}>
             {place?.name ?? ''}
-            {visit ? ` · ${formatClock(visit.startAt)} – ${formatClock(visit.endAt)}` : ''}
-            {visit ? ` · ${formatWeekday(visit.startAt)}` : ''}
+            {visit
+              ? ` · ${clockLabelOf(visit, 'start')} – ${clockLabelOf(visit, 'end')}`
+              : ''}
+            {visit ? ` · ${weekdayLabelOf(visit)}` : ''}
           </Text>
         </View>
       </View>

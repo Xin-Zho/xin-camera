@@ -6,11 +6,24 @@
 
 export type MediaKind = 'photo' | 'video';
 
+/**
+ * 数据来源。示例素材与真实相册导入的数据放在同一套结构里，
+ * 靠这个字段区分——地图聚合、地点合并、测试断言都只认同一类来源，
+ * 不会出现「真实照片被并进示例地点」这种看起来对、其实错的结果。
+ */
+export type DataOrigin = 'mock' | 'library';
+
+/**
+ * 归属日（日历日）的来源。与 src/library/dateRule.ts 的判定结果一一对应，
+ * 这里单独声明是为了让领域类型不反向依赖读取层。
+ */
+export type DateSourceKind = 'exif-offset' | 'exif-datetime-original' | 'device-tz' | 'none';
+
 export interface MediaAsset {
   id: string;
   /**
-   * 原型阶段不用真实文件路径，用 `mock:<slug>` 资源键，
-   * 由 src/data/mediaSource.ts 解析成项目内本地图片。
+   * 示例素材是 `mock:<slug>` 资源键，由 src/data/mediaSource.ts 解析成本地图片；
+   * 导入的真实照片是 `file://…`，此时直接交给 Image。
    */
   uri: string;
   kind: MediaKind;
@@ -21,6 +34,17 @@ export interface MediaAsset {
   isScreenshot?: boolean;
   width: number;
   height: number;
+  origin?: DataOrigin;
+  /** 真实相册的 PHAsset id。重复导入的数据源键，没有它就无法判断「这张是不是已经导入过」 */
+  libraryAssetId?: string;
+  /**
+   * 导入时**当场固定**下来的归属日（YYYY-MM-DD）。
+   * 之后所有按天分组、默认标题都读它，不再从 capturedAt 推——
+   * 否则设备时区一变（回国、出差），走设备时区兜底的那批照片会整体换天。
+   */
+  dateKey?: string;
+  /** 归属日是怎么定的，便于回溯；导入后不改 */
+  dateSource?: DateSourceKind;
 }
 
 export interface GeoPoint {
@@ -36,6 +60,9 @@ export interface Place {
   city?: string;
   mediaIds: string[];
   visitIds: string[];
+  origin?: DataOrigin;
+  /** 没有定位的照片收在这一处，不参与地图标记 */
+  unlocated?: boolean;
 }
 
 export interface Visit {
@@ -47,6 +74,9 @@ export interface Visit {
   endAt: string;
   mediaIds: string[];
   coverMediaId: string;
+  origin?: DataOrigin;
+  /** 归属日，用来判断「同一天同一地点是否已经有到访」 */
+  dateKey?: string;
 }
 
 export type StoryLayout = 'editorial' | 'large-cover' | 'grid';
@@ -86,6 +116,17 @@ export interface Story {
   /** 原型中用于可逆拆分；正式版可改为独立快照结构 */
   mergeSnapshot?: Story[];
   updatedAt: string;
+  origin?: DataOrigin;
+  /**
+   * 归属日（YYYY-MM-DD）。有它就按它分组和显示，不看 startAt 的时区解读。
+   * 这是「导入时固定日期」这条规则在展示层的落点。
+   */
+  dateKey?: string;
+  /**
+   * 用户是否亲手改过这本（改标题、封面、布局、标题位置、正文、调序、重点、合并）。
+   * 导入时**只往没被改过的故事里追加新照片**，改过的一律不动——追加会打乱用户排好的顺序。
+   */
+  editedByUser?: boolean;
 }
 
 export type TimeGranularity = 'year' | 'month' | 'day';

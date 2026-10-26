@@ -1,4 +1,4 @@
-import { toDate } from '@/src/utils/datetime';
+import { dayKeyOf, toDate } from '@/src/utils/datetime';
 import { isWithinRange } from '@/src/domain/timeline';
 import type { MediaAsset, Place, PlaceSummary, Story, TimeRange, Visit } from '@/src/domain/types';
 
@@ -112,15 +112,23 @@ export function selectMonthsWithVisits(visits: Visit[], range: TimeRange): strin
   return Array.from(keys);
 }
 
-/** 故事相册按时间段分组时用：同一天的多本排在一起 */
-export function groupStoriesByDay(stories: Story[]): { dayKey: string; stories: Story[] }[] {
-  const groups: { dayKey: string; stories: Story[] }[] = [];
+/**
+ * 故事相册按时间段分组时用：同一天的多本排在一起。
+ *
+ * 优先用 `story.dateKey`（导入时固定的归属日），没有才回退到 startAt 的设备时区解读。
+ * 这一条是「换时区后故事不换天」的落点：分组不再读设备时区。
+ * 注意入参要求已按时间倒序（`selectActiveStories` 保证了这一点），
+ * 这里只做相邻合并，不重新排序。
+ */
+export function groupStoriesByDay(
+  stories: Story[],
+): { dayKey: string; dateKey: string; stories: Story[] }[] {
+  const groups: { dayKey: string; dateKey: string; stories: Story[] }[] = [];
   stories.forEach((story) => {
-    const d = toDate(story.startAt);
-    const dayKey = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+    const dateKey = dayKeyOf(story.startAt, story.dateKey);
     const last = groups[groups.length - 1];
-    if (last && last.dayKey === dayKey) last.stories.push(story);
-    else groups.push({ dayKey, stories: [story] });
+    if (last && last.dateKey === dateKey) last.stories.push(story);
+    else groups.push({ dayKey: dateKey, dateKey, stories: [story] });
   });
   return groups;
 }

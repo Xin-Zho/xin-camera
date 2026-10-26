@@ -18,7 +18,12 @@ import type { MediaAsset, Story } from '@/src/domain/types';
 import { selectStoryById } from '@/src/store/selectors';
 import { useAppStore } from '@/src/store/appStore';
 import { colors, editorialTypography, layout, radius, spacing, typography } from '@/src/theme';
-import { formatDay, formatDayFull, formatWeekday, partOfDay } from '@/src/utils/datetime';
+import {
+  dayLabelFullOf,
+  dayLabelOf,
+  partOfDayOf,
+  weekdayLabelOf,
+} from '@/src/utils/datetime';
 import { fitWithin, maxReaderMediaHeight } from '@/src/utils/mediaFit';
 
 /** 把故事媒体按版式切成"行"，每行是全宽图或两张并排 */
@@ -116,7 +121,7 @@ export default function StoryReaderScreen() {
     );
   }
 
-  const sameDay = formatDay(story.startAt) === formatDay(story.endAt);
+  const sameDay = dayLabelOf(story, 'start') === dayLabelOf(story, 'end');
   const mergedCount = story.mergedFromStoryIds?.length ?? 0;
 
   // 拆分会丢弃在合集上做的编辑（按快照还原源故事），所以必须确认一次
@@ -183,9 +188,8 @@ export default function StoryReaderScreen() {
       </View>
 
       <Text style={styles.kicker}>
-        {formatDayFull(story.startAt)} {formatWeekday(story.startAt)}{' '}
-        {partOfDay(story.startAt)}
-        {sameDay ? '' : ` – ${formatDay(story.endAt)}`}
+        {dayLabelFullOf(story)} {weekdayLabelOf(story)} {partOfDayOf(story)}
+        {sameDay ? '' : ` – ${dayLabelOf(story, 'end')}`}
       </Text>
       <Text style={styles.title}>{story.title}</Text>
       <Text style={styles.placeLine}>{placeNames}</Text>

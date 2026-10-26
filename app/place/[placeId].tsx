@@ -8,7 +8,14 @@ import { VisitCardStack } from '@/src/components/place/VisitCardStack';
 import { selectPlaceById, selectVisitsOfPlace } from '@/src/store/selectors';
 import { useAppStore } from '@/src/store/appStore';
 import { colors, layout, radius, spacing, typography } from '@/src/theme';
-import { formatDayFull, formatWeekday, partOfDay } from '@/src/utils/datetime';
+import {
+  formatDayFull,
+  formatDayKeyFull,
+  formatWeekday,
+  formatWeekdayKey,
+  partOfDay,
+  partOfDayLiteral,
+} from '@/src/utils/datetime';
 
 export default function PlaceScreen() {
   const router = useRouter();
@@ -53,6 +60,12 @@ export default function PlaceScreen() {
           </Text>
           <Text style={styles.placeMeta} numberOfLines={1}>
             {[
+              // 未定位的照片没有坐标，不能显示一个假的经纬度
+              place?.unlocated
+                ? '这些照片没有定位信息'
+                : place
+                  ? `${place.coordinate.latitude.toFixed(3)}, ${place.coordinate.longitude.toFixed(3)}`
+                  : null,
               place?.city,
               place?.category,
               visits.length > 0 ? `${visits.length} 次到访` : null,
@@ -65,8 +78,10 @@ export default function PlaceScreen() {
 
       {latest ? (
         <Text style={styles.latestLine}>
-          最近一次 · {formatDayFull(latest.startAt)} {formatWeekday(latest.startAt)}{' '}
-          {partOfDay(latest.startAt)}
+          最近一次 ·{' '}
+          {latest.dateKey ? formatDayKeyFull(latest.dateKey) : formatDayFull(latest.startAt)}{' '}
+          {latest.dateKey ? formatWeekdayKey(latest.dateKey) : formatWeekday(latest.startAt)}{' '}
+          {latest.dateKey ? partOfDayLiteral(latest.startAt) : partOfDay(latest.startAt)}
         </Text>
       ) : null}
 

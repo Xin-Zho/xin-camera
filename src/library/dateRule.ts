@@ -17,22 +17,25 @@
  * 三条刻意的约束：
  *   - 不猜。拿不到就 source='device-tz'，不编一个「大概是 +09:00」；
  *   - 任何一个来源的可用性都记进 evidence，界面上逐条能看见判定依据；
- *   - 坏值（全零、1970、偏移超过 ±14h）当缺失处理，不参与判定。
+ *   - 坏值（全零、1970、偏移超过 ±14h、反推值不在 15 分钟粒度上）当缺失处理，不参与判定。
+ *
+ * 两个「不可越界」的措辞约定（来自真机样本复核）：
+ *   - 回退设备时区的后果是**可能跨日**，不是「一定错一天」。要不要跨日取决于两个时区差
+ *     和照片的具体时刻，海外夜间照片也可能两头落在同一天；
+ *   - 日期相同**不代表**时间可信。墙上时间和 creationTime 折算出来的时刻能差几小时而
+ *     日期碰巧一样，这种情况要单独报「时刻不一致」，不能因为日期对了就当成没问题。
  */
+
+import type { DateSourceKind } from '@/src/domain/types';
 
 import { extractExifTimeFields } from './exif';
 import type { LibraryMediaType } from './types';
 
-/** 日期来源。UI 和汇总都按这个枚举分组，不允许出现隐式的第四种。 */
-export type DateSource =
-  /** EXIF DateTimeOriginal 的日期部分（拍摄地墙上时间，最直接的证据） */
-  | 'exif-datetime-original'
-  /** creationTime + EXIF 显式偏移 */
-  | 'exif-offset'
-  /** 回退设备时区（旧行为，会错） */
-  | 'device-tz'
-  /** 连绝对时刻都没有 */
-  | 'none';
+/**
+ * 日期来源。UI 和汇总都按这个枚举分组，不允许出现隐式的第四种。
+ * 取值集合在 domain/types.ts 里只写一份（`MediaAsset.dateSource` 也要用），这里只做别名。
+ */
+export type DateSource = DateSourceKind;
 
 /** EXIF 墙上时间。没有时区含义，只在「拍摄地当地」这一坐标系里有意义。 */
 export interface WallClock {
@@ -60,6 +63,30 @@ export interface ExifTimeEvidence {
 }
 
 const MAX_PLAUSIBLE_OFFSET_MINUTES = 14 * 60;
+
+/** 反推偏移与「参照偏移」相差超过这个分钟数，就报时刻不一致（秒级取整不算） */
+const TIME_CONFLICT_TOLERANCE_MINUTES = 2;
+
+/**
+ * 现实中的时区偏移都是 15 分钟的整数倍（含 +05:45 尼泊尔、+08:45 澳洲 Eucla）。
+ * 反推出来的值不落在这个格子上，基本可以断定 DateTimeOriginal 和 creationTime
+ * 描述的不是同一个时刻（改写工具、相机时钟漂移、导出流水线都会造成这种差）。
+ * 允许 ±1 分钟是给秒级取整留余量。
+ */
+export function isQuarterHourAligned(minutes: number): boolean {
+  const abs = Math.abs(minutes);
+  return abs % 15 === 0 || (abs + 1) % 15 === 0 || (abs - 1) % 15 === 0;
+}
+
+/** 把分钟差写成「3 小时 38 分」，界面上比裸数字好核对 */
+export function formatDurationMinutes(minutes: number): string {
+  const abs = Math.abs(minutes);
+  const hours = Math.floor(abs / 60);
+  const rest = abs % 60;
+  if (hours === 0) return `${rest} 分`;
+  if (rest === 0) return `${hours} 小时`;
+  return `${hours} 小时 ${rest} 分`;
+}
 
 function pad2(n: number): string {
   return `${n}`.padStart(2, '0');
@@ -251,11 +278,20 @@ export interface ShootDateResolution {
   deviceDateKey: string | null;
   /** 两个口径落在不同的一天 */
   crossDay: boolean;
-  /** EXIF 内部自相矛盾（DateTimeOriginal 推定的偏移 ≠ 声明偏移，或日期不一致） */
+  /** 日期层面的冲突：声明偏移算出的日与墙上时间的日不一致 */
   conflict: boolean;
+  /**
+   * 时刻层面的冲突：墙上时间与 creationTime 折算的时刻对不上（相差超过 2 分钟），
+   * **与日期是否相同无关**。日期碰巧一样也要报——否则「差 3 小时 38 分」这种样本会被静默吞掉。
+   */
+  timeConflict: boolean;
+  /** 墙上时间与参照偏移折算时刻的差（分钟，取绝对值） */
+  wallClockGapMinutes: number | null;
   /** DateTimeOriginal 与 creationTime 相减反推的偏移 */
   impliedOffsetMinutes: number | null;
   impliedOffsetPlausible: boolean;
+  /** 反推值是否落在 15 分钟粒度上（时区偏移的现实约束） */
+  impliedQuarterHourAligned: boolean;
   /** 反推偏移与设备偏移是否一致 */
   impliedMatchesDevice: boolean | null;
   /** EXIF 墙上时间与 creationTime 差得离谱（不像真实时区偏移），因此没被采用 */
@@ -289,8 +325,11 @@ export function resolveShootDate(input: ResolveShootDateInput): ShootDateResolut
       deviceDateKey: null,
       crossDay: false,
       conflict: false,
+      timeConflict: false,
+      wallClockGapMinutes: null,
       impliedOffsetMinutes: null,
       impliedOffsetPlausible: false,
+      impliedQuarterHourAligned: false,
       impliedMatchesDevice: null,
       wallClockRejected: false,
       hoursFromMidnight: null,
@@ -314,12 +353,29 @@ export function resolveShootDate(input: ResolveShootDateInput): ShootDateResolut
     exif?.dateTimeOriginal != null
       ? Math.round((wallClockAsUtcMs(exif.dateTimeOriginal) - ms) / 60_000)
       : null;
+  const impliedQuarterHourAligned =
+    impliedOffsetMinutes !== null && isQuarterHourAligned(impliedOffsetMinutes);
+  // 「合理」= 落在 ±14h 内 **并且** 落在 15 分钟粒度上。只判范围会让 +04:21 这种
+  // 明显是数据打架的结果被当成真实时区，进而被写进 evidence 说成「正好是现实时区偏移」。
   const impliedOffsetPlausible =
-    impliedOffsetMinutes !== null && isPlausibleOffset(impliedOffsetMinutes);
+    impliedOffsetMinutes !== null &&
+    isPlausibleOffset(impliedOffsetMinutes) &&
+    impliedQuarterHourAligned;
   const impliedMatchesDevice =
-    impliedOffsetMinutes !== null && deviceOffset !== null
+    impliedOffsetMinutes !== null && impliedOffsetPlausible && deviceOffset !== null
       ? Math.abs(impliedOffsetMinutes - deviceOffset) <= 1
       : null;
+
+  // 参照偏移：优先用 EXIF 声明的，没有就退到设备偏移。
+  // 墙上时间与「参照偏移折算出的时刻」差多少，就是时刻层面的不一致量。
+  const referenceOffset = exif?.offsetMinutes ?? deviceOffset ?? null;
+  const wallClockGapMinutes =
+    impliedOffsetMinutes !== null && referenceOffset !== null
+      ? Math.abs(impliedOffsetMinutes - referenceOffset)
+      : null;
+  const timeConflict =
+    wallClockGapMinutes !== null && wallClockGapMinutes > TIME_CONFLICT_TOLERANCE_MINUTES;
+  const referenceLabel = exif?.offsetMinutes != null ? '声明偏移' : '设备时区';
 
   if (exif === null) {
     evidence.push('EXIF 未读取，只能按设备时区归日');
@@ -334,13 +390,28 @@ export function resolveShootDate(input: ResolveShootDateInput): ShootDateResolut
       )}`,
     );
     if (impliedOffsetMinutes !== null) {
-      evidence.push(
-        impliedOffsetPlausible
-          ? `它与 creationTime 相差 ${formatOffset(impliedOffsetMinutes)}，正好是现实时区偏移${
-              impliedMatchesDevice ? '（等于设备偏移）' : '（不等于设备偏移）'
-            }`
-          : `它与 creationTime 相差 ${impliedOffsetMinutes} 分钟，不像真实时区偏移，不作为依据`,
-      );
+      if (impliedOffsetPlausible) {
+        evidence.push(
+          `它与 creationTime 相差 ${formatOffset(impliedOffsetMinutes)}，落在 15 分钟粒度内${
+            impliedMatchesDevice ? '（等于设备偏移）' : '（不等于设备偏移）'
+          }`,
+        );
+      } else {
+        evidence.push(
+          impliedQuarterHourAligned
+            ? `它与 creationTime 相差 ${formatOffset(impliedOffsetMinutes)}，超出 ±14h，不作为真实时区偏移`
+            : `它与 creationTime 相差 ${formatOffset(
+                impliedOffsetMinutes,
+              )}（不在 15 分钟粒度上），不是现实时区偏移，只说明两个时间字段打架`,
+        );
+      }
+      if (timeConflict) {
+        evidence.push(
+          `时刻不一致：墙上时间与按${referenceLabel}折算的时刻相差 ${formatDurationMinutes(
+            wallClockGapMinutes as number,
+          )}${impliedOffsetPlausible ? '，日期虽同也不能认为时刻可信' : ''}`,
+        );
+      }
     }
   }
 
@@ -385,7 +456,9 @@ export function resolveShootDate(input: ResolveShootDateInput): ShootDateResolut
     source = 'device-tz';
     offsetMinutes = deviceOffset ?? 0;
     if (!exif?.dateTimeOriginal) {
-      evidence.push('没有可用的 EXIF 时间证据 → 回退设备时区（**这一条在海外拍摄时会错一天**）');
+      evidence.push(
+        '没有可用的 EXIF 时间证据 → 回退设备时区（**可能跨日**：两个时区差多少、照片在那天的哪个时刻，共同决定会不会跨；不是必然错一天）',
+      );
     }
   }
 
@@ -421,8 +494,11 @@ export function resolveShootDate(input: ResolveShootDateInput): ShootDateResolut
     deviceDateKey,
     crossDay,
     conflict,
+    timeConflict,
+    wallClockGapMinutes,
     impliedOffsetMinutes,
     impliedOffsetPlausible,
+    impliedQuarterHourAligned,
     impliedMatchesDevice,
     wallClockRejected,
     hoursFromMidnight: midnightHours,
@@ -473,15 +549,33 @@ export interface DateRuleSummary {
   bySource: Record<DateSource, number>;
   /** 两个口径落在不同天：这些就是「旧规则会错」的样本 */
   crossDay: number;
+  /** 日期层面的冲突 */
   conflict: number;
-  /** 已读 EXIF 仍无证据、但有定位 → 候选坐标反查的样本 */
+  /** 时刻层面的冲突：日期相同但时刻对不上，也单独计数 */
+  timeConflict: number;
+  /**
+   * **已读 EXIF 且确实没有时间证据**、只能回退设备时区的样本数。
+   * 这是「需要兜底」的真数，和「有坐标能反查」是两个独立数量——
+   * 之前把这两件事混在一个分支里，导致 4 张需要兜底时报成了「兜底为 0」。
+   */
+  fallbackTotal: number;
+  /** 还没读 EXIF、暂时按设备时区算的样本。不计入 fallbackTotal，避免把「没读」当成「读不到」 */
+  fallbackPending: number;
+  /** 需要兜底、且有定位 → 坐标反查的候选 */
   fallbackWithLocation: number;
   /** 上面这些里，落在设备时区午夜前后 3 小时的 → 反查真正能救回的 */
   fallbackNearMidnightWithLocation: number;
   /** 有反推偏移的样本里，反推值等于设备偏移的数量 */
   impliedMatchesDevice: number;
   impliedTotal: number;
-  /** 自动结论 */
+  /** 样本里实际用上的生效偏移（去重后按数量降序） */
+  offsetsSeen: { offset: number; count: number; matchesDevice: boolean }[];
+  videoTotal: number;
+  videoExifRead: number;
+  screenshotTotal: number;
+  /** 这批样本**没有**覆盖到的分支。分开列出来，避免把「没出错」当成「已通过」 */
+  caveats: string[];
+  /** 关于坐标反查的结论 */
   verdict: string;
   verdictLevel: 'need-data' | 'no-need' | 'low' | 'worth' | 'unclear';
 }
@@ -490,6 +584,10 @@ export interface DateRuleSummary {
  * 汇总。这里是「坐标反查时区是否值得加入」的判定依据：
  * 只有「已读 EXIF 仍拿不到证据 + 有坐标 + 落在午夜前后」这三个条件同时成立，
  * 反查才真的能救回一天；否则加一套离线时区边界数据只是增加包体和维护成本。
+ *
+ * 注意 verdict **只回答反查要不要做**，不回答「日期规则对不对」。
+ * 后者由 caveats 表达：样本全在同一个时区、没有视频、没有跨日样本时，
+ * 规则的正确性根本没被检验过，此时说「规则通过」就是过度声明。
  */
 export function summarizeDateRule(samples: DateRuleSample[]): DateRuleSummary {
   const bySource: Record<DateSource, number> = {
@@ -501,12 +599,19 @@ export function summarizeDateRule(samples: DateRuleSample[]): DateRuleSummary {
 
   let crossDay = 0;
   let conflict = 0;
+  let timeConflict = 0;
   let exifRead = 0;
   let exifFailed = 0;
+  let fallbackTotal = 0;
+  let fallbackPending = 0;
   let fallbackWithLocation = 0;
   let fallbackNearMidnightWithLocation = 0;
   let impliedMatchesDevice = 0;
   let impliedTotal = 0;
+  let videoTotal = 0;
+  let videoExifRead = 0;
+  let screenshotTotal = 0;
+  const offsetCounts = new Map<number, { count: number; matchesDevice: boolean }>();
 
   for (const sample of samples) {
     const { resolution } = sample;
@@ -515,17 +620,89 @@ export function summarizeDateRule(samples: DateRuleSample[]): DateRuleSummary {
     if (sample.exifState === 'failed') exifFailed += 1;
     if (resolution.crossDay) crossDay += 1;
     if (resolution.conflict) conflict += 1;
+    if (resolution.timeConflict) timeConflict += 1;
+    if (sample.mediaType === 'video') {
+      videoTotal += 1;
+      if (sample.exifState === 'read') videoExifRead += 1;
+    }
+    if (sample.isScreenshot) screenshotTotal += 1;
+
+    // 只有「从 EXIF 拿到的偏移」才算样本里出现的时区，设备时区兜底不算
+    if (
+      resolution.offsetMinutes !== null &&
+      (resolution.source === 'exif-offset' || resolution.source === 'exif-datetime-original')
+    ) {
+      const prev = offsetCounts.get(resolution.offsetMinutes);
+      offsetCounts.set(resolution.offsetMinutes, {
+        count: (prev?.count ?? 0) + 1,
+        matchesDevice: resolution.deviceOffsetMinutes === resolution.offsetMinutes,
+      });
+    }
+
     if (resolution.impliedOffsetMinutes !== null) {
       impliedTotal += 1;
       if (resolution.impliedMatchesDevice) impliedMatchesDevice += 1;
     }
-    if (sample.exifState === 'read' && resolution.source === 'device-tz' && sample.hasLocation) {
-      fallbackWithLocation += 1;
-      if (resolution.nearMidnight) fallbackNearMidnightWithLocation += 1;
+
+    // 「需要兜底」必须区分「读了但没证据」和「还没读」。
+    // 后者此刻也显示成设备时区，但它不是结论，所以单独计数。
+    if (resolution.source === 'device-tz') {
+      if (sample.exifState === 'read') {
+        fallbackTotal += 1;
+        if (sample.hasLocation) {
+          fallbackWithLocation += 1;
+          if (resolution.nearMidnight) fallbackNearMidnightWithLocation += 1;
+        }
+      } else if (sample.exifState === 'unread') {
+        fallbackPending += 1;
+      }
     }
   }
 
   const exifUnread = samples.length - exifRead - exifFailed;
+  const offsetsSeen = Array.from(offsetCounts.entries())
+    .map(([offset, info]) => ({ offset, count: info.count, matchesDevice: info.matchesDevice }))
+    .sort((a, b) => b.count - a.count);
+
+  const caveats: string[] = [];
+  if (exifUnread > 0) {
+    caveats.push(`还有 ${exifUnread} 张没读 EXIF，统计只覆盖已读的 ${exifRead} 张。`);
+  }
+  if (exifFailed > 0) {
+    caveats.push(`${exifFailed} 张 EXIF 读取失败，它们的来源是兜底值，不代表真的没有证据。`);
+  }
+  if (offsetsSeen.length > 0) {
+    const allDevice = offsetsSeen.every((item) => item.matchesDevice);
+    const list = offsetsSeen
+      .map((item) => `${formatOffset(item.offset)} ×${item.count}`)
+      .join('、');
+    if (allDevice) {
+      caveats.push(
+        `样本里能用上的生效偏移只有 ${list}，和设备时区一样 → **海外分支没有被验证**，不能据此认为「旅行照片归拍摄地那一天」已经通过。`,
+      );
+    } else {
+      caveats.push(`样本里出现了非设备偏移（${list}），但这些样本是否覆盖午夜前后仍需逐条看。`);
+    }
+  }
+  if (crossDay === 0) {
+    caveats.push('没有任何样本与设备口径跨日：新旧口径在这批样本上结果相同，因此这不是一次有效比对。');
+  }
+  if (videoTotal === 0) {
+    caveats.push('样本里没有视频，视频的日期归属未验证。');
+  } else if (videoExifRead === 0) {
+    caveats.push(`样本里有 ${videoTotal} 个视频，但都没有读 EXIF，视频分支未验证。`);
+  }
+  if (screenshotTotal === 0) {
+    caveats.push('样本里没有截图，无 EXIF 那条兜底分支没有被覆盖。');
+  }
+  if (timeConflict > 0) {
+    caveats.push(`${timeConflict} 张的时间证据自相矛盾（日期可能相同），这些样本的归属日只能算「碰巧对」。`);
+  }
+  if (fallbackTotal > 0) {
+    caveats.push(
+      `${fallbackTotal} 张只能回退设备时区：换时区后它们的归属日会跟着变，所以导入时必须把结果固定下来。`,
+    );
+  }
 
   let verdict: string;
   let verdictLevel: DateRuleSummary['verdictLevel'];
@@ -533,16 +710,20 @@ export function summarizeDateRule(samples: DateRuleSample[]): DateRuleSummary {
   if (exifRead === 0) {
     verdictLevel = 'need-data';
     verdict = '还没有读到任何一张的 EXIF。现在下结论等于猜——先给样本读一次 EXIF。';
+  } else if (fallbackTotal === 0) {
+    verdictLevel = 'no-need';
+    verdict = `已读 ${exifRead} 张，全部都有时间证据，没有一张需要靠设备时区兜底。坐标反查时区现在不值得做。`;
   } else if (fallbackWithLocation === 0) {
     verdictLevel = 'no-need';
-    verdict = `已读 ${exifRead} 张，需要靠设备时区兜底的样本为 0。坐标反查时区现在不值得做：能读到证据的都有证据，读不到的也没有坐标可反查。`;
+    verdict = `已读 ${exifRead} 张，其中 ${fallbackTotal} 张只能回退设备时区；这 ${fallbackTotal} 张都没有定位，坐标反查救不了它们。当前不值得为反查接入离线时区数据。`;
   } else if (fallbackNearMidnightWithLocation === 0) {
     verdictLevel = 'low';
-    verdict = `有 ${fallbackWithLocation} 张只能回退设备时区、但都有坐标，只是都不在午夜前后。日粒度分组基本不受影响，坐标反查优先级低——等真出现海外午夜的样本再说。`;
+    verdict = `有 ${fallbackTotal} 张只能回退设备时区，其中 ${fallbackWithLocation} 张有定位，但都不在午夜前后。日粒度分组基本不受影响，坐标反查优先级低——等真出现海外午夜的样本再说。`;
   } else {
     verdictLevel = 'worth';
-    verdict = `有 ${fallbackNearMidnightWithLocation} 张同时满足「无 EXIF 证据 + 有坐标 + 落在午夜前后」，这部分是真会错一天的。建议只对这类样本做坐标反查，而不是全量接入离线时区边界数据。`;
+    verdict = `有 ${fallbackTotal} 张只能回退设备时区，其中 ${fallbackNearMidnightWithLocation} 张同时满足「无 EXIF 证据 + 有定位 + 落在午夜前后」，这部分是真会错一天的。建议只对这类样本做坐标反查，而不是全量接入离线时区边界数据。`;
   }
+
 
   return {
     total: samples.length,
@@ -552,10 +733,18 @@ export function summarizeDateRule(samples: DateRuleSample[]): DateRuleSummary {
     bySource,
     crossDay,
     conflict,
+    timeConflict,
+    fallbackTotal,
+    fallbackPending,
     fallbackWithLocation,
     fallbackNearMidnightWithLocation,
     impliedMatchesDevice,
     impliedTotal,
+    offsetsSeen,
+    videoTotal,
+    videoExifRead,
+    screenshotTotal,
+    caveats,
     verdict,
     verdictLevel,
   };
@@ -586,8 +775,26 @@ export function buildSampleReport(samples: DateRuleSample[], summary: DateRuleSu
     `来源：EXIF拍摄时间 ${summary.bySource['exif-datetime-original']} / EXIF偏移 ${summary.bySource['exif-offset']} / 设备时区 ${summary.bySource['device-tz']} / 无法判定 ${summary.bySource.none}`,
   );
   lines.push(
-    `与设备时区跨日 ${summary.crossDay} · 证据冲突 ${summary.conflict} · 需兜底且有坐标 ${summary.fallbackWithLocation}（其中午夜前后 ${summary.fallbackNearMidnightWithLocation}）`,
+    `与设备时区跨日 ${summary.crossDay} · 日期冲突 ${summary.conflict} · 时刻不一致 ${summary.timeConflict}`,
   );
+  lines.push(
+    `需兜底（已读 EXIF 无证据）${summary.fallbackTotal} 张，其中有定位 ${summary.fallbackWithLocation} 张（午夜前后 ${summary.fallbackNearMidnightWithLocation} 张）· 待读 ${summary.fallbackPending} 张`,
+  );
+  if (summary.offsetsSeen.length > 0) {
+    lines.push(
+      `样本内生效偏移：${summary.offsetsSeen
+        .map(
+          (item) =>
+            `${formatOffset(item.offset)} ×${item.count}${item.matchesDevice ? '（=设备）' : ''}`,
+        )
+        .join('、')}`,
+    );
+  }
+  if (summary.caveats.length > 0) {
+    lines.push('');
+    lines.push('未覆盖 / 不能据此下结论的部分：');
+    for (const caveat of summary.caveats) lines.push(`- ${caveat}`);
+  }
   lines.push('');
   for (const sample of samples) {
     const r = sample.resolution;
@@ -600,7 +807,9 @@ export function buildSampleReport(samples: DateRuleSample[], summary: DateRuleSu
     lines.push(
       `  归到 ${r.dateKey ?? '—'}（${describeDateSource(r.source)}）· 设备时区口径 ${
         r.deviceDateKey ?? '—'
-      }${r.crossDay ? ' ← 跨日' : ''}`,
+      }${r.crossDay ? ' ← 跨日' : ''}${r.conflict ? ' ← 日期冲突' : ''}${
+        r.timeConflict ? ' ← 时刻不一致' : ''
+      }`,
     );
     if (r.epochMs !== null) {
       lines.push(`  UTC ${new Date(r.epochMs).toISOString()} · 推定偏移 ${r.offsetMinutes === null ? '—' : formatOffset(r.offsetMinutes)}`);
@@ -608,13 +817,19 @@ export function buildSampleReport(samples: DateRuleSample[], summary: DateRuleSu
     if (r.impliedOffsetMinutes !== null) {
       lines.push(
         `  反推偏移 ${formatOffset(r.impliedOffsetMinutes)}${
-          r.impliedOffsetPlausible ? '' : '（不合理）'
-        }${r.impliedMatchesDevice ? ' = 设备偏移' : ''}`,
+          r.impliedOffsetPlausible
+            ? ''
+            : r.impliedQuarterHourAligned
+              ? '（超出 ±14h）'
+              : '（不在 15 分钟粒度上）'
+        }${r.impliedMatchesDevice ? ' = 设备偏移' : ''}${
+          r.wallClockGapMinutes === null ? '' : ` · 与参照偏移差 ${r.wallClockGapMinutes} 分`
+        }`,
       );
     }
     for (const line of r.evidence) lines.push(`  · ${line}`);
   }
   lines.push('');
-  lines.push(`结论：${summary.verdict}`);
+  lines.push(`结论（只针对坐标反查）：${summary.verdict}`);
   return lines.join('\n');
 }

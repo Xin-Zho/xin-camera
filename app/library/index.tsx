@@ -3,6 +3,7 @@ import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
   Linking,
@@ -14,13 +15,19 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { collectExifTimeEvidence, resolveShootDate } from '@/src/library/dateRule';
+import { deviceOffsetMinutes, toEpochMs } from '@/src/library/epoch';
+import type { ImportCandidate } from '@/src/library/importPlan';
 import {
   PAGE_SIZE,
   checkAvailability,
   enrichPage,
   presentLimitedPicker,
+  readAssetExif,
   readPage,
   readPermission,
+  resolveLocation,
+  resolveUri,
 } from '@/src/library/reader';
 import { formatShortTime } from '@/src/library/epoch';
 import type {
@@ -30,6 +37,7 @@ import type {
   LibraryMediaType,
   LibraryPermission,
 } from '@/src/library/types';
+import { useAppStore } from '@/src/store/appStore';
 import { colors, layout, radius, spacing, typography } from '@/src/theme';
 
 /**
@@ -95,6 +103,20 @@ function durationLabel(ms: number | null): string | null {
   return `${minutes}:${`${seconds}`.padStart(2, '0')}`;
 }
 
+/** 一次导入的结果。逐项列出来，是为了让「为什么只进了 12 张」当场有答案 */
+interface ImportOutcome {
+  addedMedia: number;
+  locatedMedia: number;
+  unlocatedMedia: number;
+  createdPlaces: number;
+  createdStories: number;
+  appendedMedia: number;
+  skippedDuplicates: number;
+  skippedNoDate: number;
+  skippedNonPhoto: number;
+  cancelled: boolean;
+}
+
 export default function LibraryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -108,6 +130,11 @@ export default function LibraryScreen() {
   const [loadingPage, setLoadingPage] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [importing, setImporting] = useState<{ done: number; total: number } | null>(null);
+  const [outcome, setOutcome] = useState<ImportOutcome | null>(null);
+
+  const importLibraryAssets = useAppStore((s) => s.importLibraryAssets);
+  const importCancelled = useRef(false);
 
   const cancelled = useRef(false);
   const loadingRef = useRef(false);
@@ -225,6 +252,141 @@ export default function LibraryScreen() {
     }
   }, [resetAndReload]);
 
+  /**
+   * 把当前已加载的照片导入成地点 / 到访 / 故事。
+   *
+   * 流程刻意是「逐张顺序处理」而不是并发：
+   *   读 EXIF 在 iOS 上要把当前版本导出成临时文件，并发读更容易被系统掐掉；
+   *   顺序做还能稳定显示进度，用户知道还要等多久。
+   *
+   * 单张失败不中止整批——一张读不出时间就跳过，剩下的照常进。
+   * 去重、切分、追加规则全在 planLibraryImport 里，这里只准备候选数据。
+   */
+  const runImport = useCallback(
+    async (targets: LibraryAsset[]) => {
+      importCancelled.current = false;
+      setOutcome(null);
+      setError(null);
+
+      const photos = targets.filter((asset) => asset.mediaType === 'photo');
+      const skippedNonPhoto = targets.length - photos.length;
+      const candidates: ImportCandidate[] = [];
+      let skippedNoDate = 0;
+
+      setImporting({ done: 0, total: photos.length });
+      for (let index = 0; index < photos.length; index += 1) {
+        if (importCancelled.current) break;
+        const asset = photos[index];
+        setImporting({ done: index, total: photos.length });
+        try {
+          const epochMs = toEpochMs(asset.creationTime);
+          if (epochMs === null) {
+            skippedNoDate += 1;
+            continue;
+          }
+
+          // 定位可能还没补完（上一页的 enrich 还在跑），这里补一次再定地点
+          const location =
+            asset.location.kind === 'value' || asset.location.kind === 'missing'
+              ? asset.location
+              : await resolveLocation(asset.id);
+
+          // EXIF 读不到就当没有：判定层会把来源标成设备时区，不编证据
+          let evidence = null;
+          try {
+            evidence = collectExifTimeEvidence(await readAssetExif(asset.id));
+          } catch {
+            evidence = null;
+          }
+
+          const resolution = resolveShootDate({
+            epochMs,
+            deviceOffsetMinutes: deviceOffsetMinutes(epochMs),
+            exif: evidence,
+            hasLocation: location.kind === 'value',
+          });
+          if (!resolution.dateKey) {
+            skippedNoDate += 1;
+            continue;
+          }
+
+          // 缩略图已经有了就用它，省一次原图导出；没有才单独取 uri
+          const uri =
+            asset.thumb.kind === 'ready' ? asset.thumb.uri : ((await resolveUri(asset.id)) ?? '');
+
+          candidates.push({
+            libraryAssetId: asset.id,
+            filename: asset.filename,
+            width: asset.width,
+            height: asset.height,
+            uri,
+            capturedMs: epochMs,
+            dateKey: resolution.dateKey,
+            dateSource: resolution.source,
+            offsetMinutes: resolution.offsetMinutes,
+            location:
+              location.kind === 'value'
+                ? { latitude: location.latitude, longitude: location.longitude }
+                : null,
+            isScreenshot: asset.subtypes.some((s) => s.toLowerCase().includes('screenshot')),
+          });
+        } catch {
+          // 单张失败（资产被删、权限变化）只影响这一张
+          skippedNoDate += 1;
+        }
+      }
+      setImporting(null);
+
+      const wasCancelled = importCancelled.current;
+      if (candidates.length === 0) {
+        setOutcome({
+          addedMedia: 0,
+          locatedMedia: 0,
+          unlocatedMedia: 0,
+          createdPlaces: 0,
+          createdStories: 0,
+          appendedMedia: 0,
+          skippedDuplicates: 0,
+          skippedNoDate,
+          skippedNonPhoto,
+          cancelled: wasCancelled,
+        });
+        return;
+      }
+
+      const plan = importLibraryAssets(candidates);
+      setOutcome({
+        addedMedia: plan.newMedia.length,
+        locatedMedia: plan.locatedMedia,
+        unlocatedMedia: plan.unlocatedMedia,
+        createdPlaces: plan.createdPlaceNames.length,
+        createdStories: plan.createdStoryCount,
+        appendedMedia: plan.appendedMediaCount,
+        skippedDuplicates: plan.skippedDuplicates,
+        skippedNoDate,
+        skippedNonPhoto,
+        cancelled: wasCancelled,
+      });
+    },
+    [importLibraryAssets],
+  );
+
+  const confirmImport = useCallback(() => {
+    const photoCount = assets.filter((asset) => asset.mediaType === 'photo').length;
+    if (photoCount === 0) return;
+    Alert.alert(
+      '导入到回忆？',
+      `会用当前已加载的 ${photoCount} 张照片，按拍摄时间和定位生成地点、到访和故事。\n\n` +
+        '· 已导入过的照片会跳过，不会生成两份\n' +
+        '· 你改过标题或顺序的故事不会被追加照片\n' +
+        '· 归属日在导入时固定，之后换时区也不会变',
+      [
+        { text: '取消', style: 'cancel' },
+        { text: '开始导入', onPress: () => void runImport(assets) },
+      ],
+    );
+  }, [assets, runImport]);
+
   const renderCell = ({ item }: { item: LibraryAsset }) => {
     const duration = durationLabel(item.durationMs);
     const isVideo = item.mediaType === 'video';
@@ -327,9 +489,60 @@ export default function LibraryScreen() {
         />
       </Pressable>
 
+      <Pressable
+        style={[styles.importButton, (assets.length === 0 || importing !== null) && styles.importButtonOff]}
+        disabled={assets.length === 0 || importing !== null}
+        onPress={confirmImport}>
+        <Text style={styles.importButtonText}>
+          {importing
+            ? `读取时间与定位 ${importing.done}/${importing.total}`
+            : `导入到回忆（${assets.filter((item) => item.mediaType === 'photo').length} 张）`}
+        </Text>
+      </Pressable>
+      {importing ? (
+        <Pressable
+          style={styles.importCancel}
+          onPress={() => {
+            importCancelled.current = true;
+          }}>
+          <Text style={styles.importCancelText}>取消（已处理的部分会保存）</Text>
+        </Pressable>
+      ) : null}
+      <Text style={styles.importHint}>
+        生成地点、到访和故事，写入本机存档。需要逐张读 EXIF，所以会慢一些；
+        读不到拍摄时间或已经导入过的会自动跳过。
+      </Text>
+
+      {outcome ? (
+        <View style={styles.outcomeBox}>
+          <Text style={styles.outcomeTitle}>
+            {outcome.cancelled ? '导入被中断，已经处理的部分已保存' : '导入完成'}
+          </Text>
+          <Text style={styles.outcomeLine} selectable>
+            新增照片 {outcome.addedMedia} 张（有定位 {outcome.locatedMedia} · 未定位{' '}
+            {outcome.unlocatedMedia}）
+          </Text>
+          <Text style={styles.outcomeLine} selectable>
+            新建地点 {outcome.createdPlaces} 个 · 新故事 {outcome.createdStories} 本
+            {outcome.appendedMedia > 0 ? ` · 追加进已有故事 ${outcome.appendedMedia} 张` : ''}
+          </Text>
+          <Text style={styles.outcomeLine} selectable>
+            跳过：重复 {outcome.skippedDuplicates} 张 · 没有可用拍摄时间 {outcome.skippedNoDate} 张
+            {outcome.skippedNonPhoto > 0 ? ` · 非照片 ${outcome.skippedNonPhoto} 个` : ''}
+          </Text>
+          {outcome.addedMedia > 0 ? (
+            <Pressable
+              style={styles.outcomeLink}
+              onPress={() => router.push('/(tabs)/stories')}>
+              <Text style={styles.outcomeLinkText}>去故事页看</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+
       <Text style={styles.hint}>
-        按拍摄时间倒序，每批 {PAGE_SIZE} 张。这一页只读：不写入相册，也不生成到访和故事。
-        点任意一张可以看系统返回的原始字段。
+        按拍摄时间倒序，每批 {PAGE_SIZE} 张。读取是只读的（不写相册）；导入会把照片变成地点、到访和故事，
+        写进本机存档。点任意一张可以看系统返回的原始字段。
       </Text>
 
       {error ? (
@@ -384,7 +597,7 @@ export default function LibraryScreen() {
         </Pressable>
         <View style={styles.headerText}>
           <Text style={styles.title}>真实相册</Text>
-          <Text style={styles.subtitle}>只读实验 · 不生成到访和故事</Text>
+          <Text style={styles.subtitle}>读取全只读 · 导入会生成地点与故事</Text>
         </View>
       </View>
 
@@ -544,6 +757,35 @@ const styles = StyleSheet.create({
   entryText: { flex: 1, gap: 2 },
   entryTitle: { ...typography.footnote, color: colors.textPrimary, fontWeight: '600' },
   entryHint: { ...typography.caption2, color: colors.textTertiary, lineHeight: 14 },
+  importButton: {
+    minHeight: layout.minTouchTarget,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.lg,
+    backgroundColor: colors.textPrimary,
+    marginBottom: spacing.xs,
+  },
+  importButtonOff: { opacity: 0.4 },
+  importButtonText: { ...typography.callout, color: colors.textOnMedia, fontWeight: '600' },
+  importCancel: { alignSelf: 'center', paddingVertical: spacing.xs },
+  importCancelText: { ...typography.caption, color: colors.textSecondary },
+  importHint: {
+    ...typography.caption2,
+    color: colors.textTertiary,
+    lineHeight: 15,
+    marginBottom: spacing.sm,
+  },
+  outcomeBox: {
+    backgroundColor: colors.accentMuted,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    gap: 3,
+    marginBottom: spacing.sm,
+  },
+  outcomeTitle: { ...typography.footnote, color: colors.accent, fontWeight: '600' },
+  outcomeLine: { ...typography.caption2, color: colors.textSecondary, lineHeight: 16 },
+  outcomeLink: { alignSelf: 'flex-start', paddingTop: spacing.xxs },
+  outcomeLinkText: { ...typography.caption, color: colors.accent, fontWeight: '600' },
   hint: {
     ...typography.caption,
     color: colors.textTertiary,

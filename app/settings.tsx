@@ -57,9 +57,14 @@ export default function SettingsScreen() {
   // 用 store 而不是 mock 常量：这里要反映用户当前的操作结果（合并、删除），
   // 否则在故事页删完再进来会看到没变的数字，看起来像状态不同步。
   const stories = useAppStore((s) => s.stories);
+  const places = useAppStore((s) => s.places);
+  const visits = useAppStore((s) => s.visits);
+  const media = useAppStore((s) => s.media);
   const resetToMock = useAppStore((s) => s.resetToMock);
   const storageIssue = useAppStore((s) => s.storageIssue);
   const activeStories = selectActiveStories(stories).length;
+  const importedMedia = media.filter((m) => m.origin === 'library').length;
+  const importedStories = stories.filter((s) => s.origin === 'library').length;
 
   // 隔离存档只在这里用来决定「要不要显示那一行」，内容在专门页面里看
   const [quarantineBytes, setQuarantineBytes] = useState<number | null>(null);
@@ -119,22 +124,36 @@ export default function SettingsScreen() {
         </View>
       ) : null}
 
-      <Text style={styles.sectionTitle}>真实相册（只读实验）</Text>
+      <Text style={styles.sectionTitle}>真实相册</Text>
       <View style={styles.card}>
         <ActionRow
           label="打开真实相册"
-          hint="读缩略图、类型、拍摄时间、定位；不生成到访和故事，也不写相册"
+          hint="读缩略图、类型、拍摄时间、定位；可从相册页小批量导入成地点与故事"
           tone="accent"
           onPress={() => router.push('/library')}
         />
         <View style={styles.divider} />
         <Row
           label="照片库扫描"
-          value="只读实验"
-          hint="已能分页读取；尚未接入到访与故事的生成链路"
+          value={importedMedia > 0 ? `已导入 ${importedMedia} 张` : '未导入'}
+          hint={
+            importedMedia > 0
+              ? `其中 ${importedStories} 本故事来自真实照片；重复导入会按相册 ID 跳过`
+              : '已能分页读取；在相册页点「导入到回忆」才会生成到访与故事'
+          }
         />
         <View style={styles.divider} />
-        <Row label="真实 GPS 与地点反查" value="只读经纬度" hint="地点名称仍来自示例数据" />
+        <Row
+          label="真实 GPS 与地点反查"
+          value="只读经纬度"
+          hint="地点名称还没有反查，导入的地点按「未命名地点 N」编号，坐标可在地点页核对"
+        />
+        <View style={styles.divider} />
+        <Row
+          label="视频"
+          value="只识别不导入"
+          hint="相册里能识别视频并显示占位卡，但暂时不进导入流程"
+        />
       </View>
 
       <Text style={styles.sectionTitle}>原型状态</Text>
@@ -145,14 +164,14 @@ export default function SettingsScreen() {
           hint={
             storageNotice
               ? '现在写不进去，退出 App 会回到示例数据'
-              : '标题、封面、顺序、重点照片，以及合并 / 拆分 / 删除都会写进本地，重启后保留'
+              : '标题、封面、顺序、重点照片，以及合并 / 拆分 / 删除和导入结果都会写进本地，重启后保留'
           }
         />
         <View style={styles.divider} />
         <Row
           label="存档范围"
           value={`v${STORE_VERSION}`}
-          hint={`只存故事层（${STORE_KEY}）；地点、到访、照片每次从示例数据重建`}
+          hint={`四层都存（故事 / 地点 / 到访 / 照片 · ${STORE_KEY}）`}
         />
         <View style={styles.divider} />
         <Row label="后台整理" value="未接入" hint="不承诺真实 iOS 后台任务" />

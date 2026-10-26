@@ -16,6 +16,7 @@ import {
   buildSampleReport,
   collectExifTimeEvidence,
   describeDateSource,
+  formatDurationMinutes,
   formatOffset,
   resolveShootDate,
   summarizeDateRule,
@@ -291,7 +292,12 @@ export default function DateRuleScreen() {
           ) : null}
           {r.conflict ? (
             <View style={[styles.chip, { backgroundColor: colors.dangerMuted }]}>
-              <Text style={[styles.chipText, { color: colors.danger }]}>证据冲突</Text>
+              <Text style={[styles.chipText, { color: colors.danger }]}>日期冲突</Text>
+            </View>
+          ) : null}
+          {r.timeConflict ? (
+            <View style={[styles.chip, { backgroundColor: colors.dangerMuted }]}>
+              <Text style={[styles.chipText, { color: colors.danger }]}>时刻不一致</Text>
             </View>
           ) : null}
         </View>
@@ -311,8 +317,15 @@ export default function DateRuleScreen() {
         {r.impliedOffsetMinutes !== null ? (
           <Text style={styles.rowMeta}>
             反推偏移 {formatOffset(r.impliedOffsetMinutes)}
-            {r.impliedOffsetPlausible ? '' : '（不合理，已弃用）'}
+            {r.impliedOffsetPlausible
+              ? ''
+              : r.impliedQuarterHourAligned
+                ? '（超出 ±14h，已弃用）'
+                : '（不在 15 分钟粒度上，不是真实时区偏移）'}
             {r.impliedMatchesDevice ? ' · 等于设备偏移' : ''}
+            {r.wallClockGapMinutes === null
+              ? ''
+              : ` · 与参照偏移差 ${formatDurationMinutes(r.wallClockGapMinutes)}`}
           </Text>
         ) : null}
 
@@ -326,7 +339,7 @@ export default function DateRuleScreen() {
         {entry?.state === 'failed' ? (
           <Text style={styles.rowWarn}>EXIF 读取失败：{entry.error}</Text>
         ) : null}
-        {r.conflict || r.wallClockRejected ? (
+        {r.conflict || r.timeConflict || r.wallClockRejected ? (
           <View style={styles.evidenceBox}>
             {r.evidence.map((line) => (
               <Text key={line} style={styles.evidenceLine}>
@@ -373,10 +386,14 @@ export default function DateRuleScreen() {
       <View style={styles.goalCard}>
         <Text style={styles.goalTitle}>目标：归在拍摄当地那一天</Text>
         <Text style={styles.goalBody}>
-          海外拍的照片回到国内后，不能因为手机现在是东八区就被挪到前一天。判定按这个顺序取第一个可用的证据：
+          海外拍的照片回到国内后，不该因为手机现在是东八区就被挪到前一天。判定按这个顺序取第一个可用的证据：
           {'\n'}1. EXIF 声明偏移（OffsetTimeOriginal 一类）
           {'\n'}2. EXIF DateTimeOriginal 的日期部分（相机写的当地墙上时间）
           {'\n'}3. 都没有 → 回退设备时区，并明确标成「设备时区」
+        </Text>
+        <Text style={styles.goalCaveat}>
+          两点不能说过头：回退设备时区的后果是「可能跨日」，不是必然错一天——海外的夜间照片
+          也可能两个时区算下来是同一天；反过来，日期相同也不代表时刻可信，要单独看有没有「时刻不一致」。
         </Text>
       </View>
 
@@ -386,15 +403,20 @@ export default function DateRuleScreen() {
           <SummaryStat label="EXIF 已读" value={`${summary.exifRead}`} />
           <SummaryStat label="EXIF 拍摄时间" value={`${summary.bySource['exif-datetime-original']}`} />
           <SummaryStat label="EXIF 偏移" value={`${summary.bySource['exif-offset']}`} />
-          <SummaryStat label="回退设备时区" value={`${summary.bySource['device-tz']}`} />
+          <SummaryStat label="需兜底" value={`${summary.fallbackTotal}`} />
           <SummaryStat label="跨日" value={`${summary.crossDay}`} />
         </View>
+        {/* 兜底数和「有坐标能反查」是两个独立数量，分行写，避免一个为 0 就掩盖另一个 */}
         <Text style={styles.summaryLine}>
-          需兜底且有坐标 {summary.fallbackWithLocation} 张，其中落在午夜前后{' '}
-          {summary.fallbackNearMidnightWithLocation} 张。
+          需兜底 {summary.fallbackTotal} 张，其中有定位 {summary.fallbackWithLocation} 张，
+          落在午夜前后 {summary.fallbackNearMidnightWithLocation} 张。
+        </Text>
+        <Text style={styles.summaryLine}>
+          待读 EXIF {summary.fallbackPending} 张（此刻显示设备时区，但不算结论）。
           {summary.impliedTotal > 0
             ? ` 反推偏移与设备偏移一致 ${summary.impliedMatchesDevice}/${summary.impliedTotal} 张。`
             : ''}
+          {summary.timeConflict > 0 ? ` 时间证据冲突 ${summary.timeConflict} 张。` : ''}
         </Text>
         <View
           style={[
@@ -406,7 +428,18 @@ export default function DateRuleScreen() {
                 : styles.verdictCalm,
           ]}>
           <Text style={styles.verdictText}>{summary.verdict}</Text>
+          <Text style={styles.verdictSub}>以上只回答「坐标反查要不要做」，不回答日期规则是否正确。</Text>
         </View>
+        {summary.caveats.length > 0 ? (
+          <View style={styles.caveatBox}>
+            <Text style={styles.caveatTitle}>这批样本没有覆盖 / 不能据此下结论</Text>
+            {summary.caveats.map((item) => (
+              <Text key={item} style={styles.caveatLine}>
+                · {item}
+              </Text>
+            ))}
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.filterRow}>
@@ -576,6 +609,12 @@ const styles = StyleSheet.create({
   },
   goalTitle: { ...typography.footnote, color: colors.textPrimary, fontWeight: '600' },
   goalBody: { ...typography.caption, color: colors.textSecondary, lineHeight: 19 },
+  goalCaveat: {
+    ...typography.caption2,
+    color: colors.textTertiary,
+    lineHeight: 16,
+    marginTop: spacing.xs,
+  },
 
   summaryCard: { gap: spacing.sm },
   summaryGrid: {
@@ -596,11 +635,21 @@ const styles = StyleSheet.create({
   statLabel: { ...typography.caption2, color: colors.textTertiary },
   summaryLine: { ...typography.caption, color: colors.textSecondary, lineHeight: 18 },
 
-  verdict: { borderRadius: radius.md, padding: spacing.md },
+  verdict: { borderRadius: radius.md, padding: spacing.md, gap: 4 },
   verdictWarn: { backgroundColor: colors.warningMuted },
   verdictInfo: { backgroundColor: colors.accentMuted },
   verdictCalm: { backgroundColor: colors.backgroundGrouped },
   verdictText: { ...typography.caption, color: colors.textPrimary, lineHeight: 19 },
+  verdictSub: { ...typography.caption2, color: colors.textTertiary, lineHeight: 15 },
+
+  caveatBox: {
+    backgroundColor: colors.backgroundGrouped,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: 3,
+  },
+  caveatTitle: { ...typography.caption2, color: colors.warning, fontWeight: '600' },
+  caveatLine: { ...typography.caption2, color: colors.textSecondary, lineHeight: 16 },
 
   filterRow: { flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' },
   filterChip: {

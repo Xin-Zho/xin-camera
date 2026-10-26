@@ -8,7 +8,7 @@ import { StoryCoverCard } from '@/src/components/story/StoryCoverCard';
 import { selectActiveStories, selectDeletedStories, groupStoriesByDay } from '@/src/store/selectors';
 import { useAppStore } from '@/src/store/appStore';
 import { colors, layout, radius, spacing, typography } from '@/src/theme';
-import { formatDay, formatGroupHeader } from '@/src/utils/datetime';
+import { dayLabelOf, formatGroupHeaderKey } from '@/src/utils/datetime';
 
 export default function StoriesScreen() {
   const router = useRouter();
@@ -116,7 +116,7 @@ export default function StoriesScreen() {
 
         {groups.map((group) => (
           <View key={group.dayKey} style={styles.group}>
-            <Text style={styles.groupHeader}>{formatGroupHeader(group.stories[0].startAt)}</Text>
+            <Text style={styles.groupHeader}>{formatGroupHeaderKey(group.dateKey)}</Text>
             {group.stories.map((story) => (
               <StoryCoverCard
                 key={story.id}
@@ -160,7 +160,7 @@ export default function StoriesScreen() {
                         {story.title}
                       </Text>
                       <Text style={styles.deletedMeta}>
-                        {formatDay(story.startAt)} · 地点和照片都还在
+                        {dayLabelOf(story)} · 地点和照片都还在
                       </Text>
                     </View>
                     <Pressable onPress={() => restoreStory(story.id)} hitSlop={8}>

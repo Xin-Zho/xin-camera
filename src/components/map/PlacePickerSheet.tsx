@@ -6,7 +6,7 @@ import { resolveMediaSource } from '@/src/data';
 import type { MapCluster } from '@/src/domain/clustering';
 import type { PlaceSummary } from '@/src/domain/types';
 import { colors, radius, spacing, typography } from '@/src/theme';
-import { formatDay, partOfDay } from '@/src/utils/datetime';
+import { dayLabelOf, partOfDayOf } from '@/src/utils/datetime';
 
 interface Props {
   /** 为 null 时关闭 */
@@ -81,7 +81,7 @@ function PlaceRow({ summary, onPress }: { summary: PlaceSummary; onPress: () => 
         </Text>
         <Text style={styles.rowMeta} numberOfLines={1}>
           {latest
-            ? `${formatDay(latest.startAt)} ${partOfDay(latest.startAt)}`
+            ? `${dayLabelOf(latest)} ${partOfDayOf(latest)}`
             : '暂无到访记录'}
           {summary.place.city ? ` · ${summary.place.city}` : ''}
         </Text>

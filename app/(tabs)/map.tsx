@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Image,
   type LayoutChangeEvent,
@@ -31,7 +31,7 @@ import type { PlaceSummary } from '@/src/domain/types';
 import { useAppStore } from '@/src/store/appStore';
 import { selectPlaceSummaries } from '@/src/store/selectors';
 import { colors, layout, radius, spacing, typography } from '@/src/theme';
-import { formatDay, formatVisitRange, partOfDay } from '@/src/utils/datetime';
+import { dayLabelOf, formatVisitRange, partOfDayOf } from '@/src/utils/datetime';
 
 const FOCUS_DELTA = 0.06;
 
@@ -52,7 +52,11 @@ export default function MapScreen() {
   const [mapReady, setMapReady] = useState(false);
 
   const summaries = useMemo(
-    () => selectPlaceSummaries(places, visits, media, timeRange),
+    () =>
+      // 未定位的照片收在一处，没有坐标，不能上地图——否则会被画到 (0,0)
+      selectPlaceSummaries(places, visits, media, timeRange).filter(
+        (summary) => !summary.place.unlocated,
+      ),
     [places, visits, media, timeRange],
   );
 
@@ -72,10 +76,13 @@ export default function MapScreen() {
   }, [ticks, timeRange.startAt]);
 
   const initialRegion = useMemo<MapRegion>(() => {
-    const newest = [...visits].sort(
-      (a, b) => new Date(b.startAt).getTime() - new Date(a.startAt).getTime(),
-    )[0];
-    const place = places.find((p) => p.id === newest?.placeId) ?? places[0];
+    const newest = [...visits]
+      .filter((visit) => !places.find((p) => p.id === visit.placeId)?.unlocated)
+      .sort((a, b) => new Date(b.startAt).getTime() - new Date(a.startAt).getTime())[0];
+    const place =
+      places.find((p) => p.id === newest?.placeId) ??
+      places.find((p) => !p.unlocated) ??
+      places[0];
     return {
       latitude: place?.coordinate.latitude ?? 22.5431,
       longitude: place?.coordinate.longitude ?? 114.0579,
@@ -145,6 +152,32 @@ export default function MapScreen() {
   );
   const followRef = useRef(followPlace);
   followRef.current = followPlace;
+
+  /**
+   * 导入后归位一次。
+   *
+   * 需求来源：导入的照片可能和示例数据不在同一个城市，导完在地图上找不到新地点，
+   * 会以为导入失败了。store 里放一个带自增 token 的请求，这里消费一次就清掉——
+   * 不用「上次导入坐标」这种状态，避免每次回到地图都再飞一次。
+   */
+  const mapFocus = useAppStore((s) => s.mapFocus);
+  const clearMapFocus = useAppStore((s) => s.clearMapFocus);
+  const focusedToken = useRef<number | null>(null);
+  useEffect(() => {
+    if (!mapFocus || !mapReady) return;
+    if (focusedToken.current === mapFocus.token) return;
+    focusedToken.current = mapFocus.token;
+    mapRef.current?.animateToRegion(
+      {
+        latitude: mapFocus.latitude,
+        longitude: mapFocus.longitude,
+        latitudeDelta: FOCUS_DELTA * 2.4,
+        longitudeDelta: FOCUS_DELTA * 2.4,
+      },
+      560,
+    );
+    clearMapFocus();
+  }, [clearMapFocus, mapFocus, mapReady]);
 
   /** 点单个地点：第一次点出底部卡片，再点进入访（规格 §5.3） */
   const handlePlacePress = useCallback(
@@ -226,7 +259,7 @@ export default function MapScreen() {
       const tick = ticks[index];
       if (!tick) return;
       const fresh = selectPlaceSummaries(places, visits, media, tick.range)
-        .filter((s) => s.visitCountInRange > 0)
+        .filter((s) => s.visitCountInRange > 0 && !s.place.unlocated)
         .sort(
           (a, b) =>
             b.visitCountInRange - a.visitCountInRange ||
@@ -327,8 +360,8 @@ export default function MapScreen() {
             </Text>
             <Text style={styles.placeCardMeta} numberOfLines={1}>
               {selectedSummary.latestVisit
-                ? `${formatDay(selectedSummary.latestVisit.startAt)} ${partOfDay(
-                    selectedSummary.latestVisit.startAt,
+                ? `${dayLabelOf(selectedSummary.latestVisit)} ${partOfDayOf(
+                    selectedSummary.latestVisit,
                   )} · ${formatVisitRange(
                     selectedSummary.latestVisit.startAt,
                     selectedSummary.latestVisit.endAt,

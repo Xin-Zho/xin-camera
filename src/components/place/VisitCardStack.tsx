@@ -12,7 +12,14 @@ import {
 import { resolveMediaSource } from '@/src/data';
 import type { MediaAsset, Place, Visit } from '@/src/domain/types';
 import { colors, layout, radius, spacing, typography } from '@/src/theme';
-import { formatClock, formatDay, partOfDay } from '@/src/utils/datetime';
+import {
+  formatClock,
+  formatClockLiteral,
+  formatDay,
+  formatDayKey,
+  partOfDay,
+  partOfDayLiteral,
+} from '@/src/utils/datetime';
 
 /**
  * 地点到访卡片堆叠（规格 §5.4）。
@@ -70,6 +77,12 @@ export function VisitCardStack({ place, visits, media, onOpenVisit }: Props) {
           (id) => mediaIndex.get(id)?.kind === 'video',
         ).length;
         const isActive = depth === 0;
+        // 导入的到访带 dateKey：日期、时段、时刻都按拍摄地口径显示，不看设备时区
+        const dayLabel = visit.dateKey ? formatDayKey(visit.dateKey) : formatDay(visit.startAt);
+        const partLabel = visit.dateKey
+          ? partOfDayLiteral(visit.startAt)
+          : partOfDay(visit.startAt);
+        const clockOf = visit.dateKey ? formatClockLiteral : formatClock;
 
         return (
           <Pressable
@@ -103,10 +116,10 @@ export function VisitCardStack({ place, visits, media, onOpenVisit }: Props) {
                   {place.name}
                 </Text>
                 <Text style={styles.cardDate}>
-                  {formatDay(visit.startAt)} {partOfDay(visit.startAt)}
+                  {dayLabel} {partLabel}
                 </Text>
                 <Text style={styles.cardMeta}>
-                  {formatClock(visit.startAt)} – {formatClock(visit.endAt)} ·{' '}
+                  {clockOf(visit.startAt)} – {clockOf(visit.endAt)} ·{' '}
                   {visit.mediaIds.length} 张
                   {videoCount > 0 ? ` · ${videoCount} 段视频` : ''}
                 </Text>
