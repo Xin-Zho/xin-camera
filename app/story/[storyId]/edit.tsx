@@ -27,7 +27,7 @@ import { selectMediaByIds, selectVisibility } from '@/src/store/selectors';
 import { colors, layout, radius, spacing, typography } from '@/src/theme';
 
 const LAYOUT_OPTIONS: { value: StoryLayout; label: string }[] = [
-  { value: 'editorial', label: '杂志交错' },
+  { value: 'editorial', label: '留白杂志' },
   { value: 'large-cover', label: '大图' },
   { value: 'grid', label: '网格' },
 ];
@@ -361,7 +361,7 @@ const styles = StyleSheet.create({
   section: { marginBottom: spacing.xl },
   sectionLabel: {
     ...typography.caption2,
-    color: colors.textTertiary,
+    color: colors.textSecondary,
     letterSpacing: 0.8,
     marginBottom: spacing.sm,
   },
@@ -370,10 +370,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  mediaCount: { ...typography.caption, color: colors.textTertiary },
+  mediaCount: { ...typography.caption, color: colors.textSecondary },
   hint: {
     ...typography.caption,
-    color: colors.textTertiary,
+    color: colors.textSecondary,
     marginTop: -spacing.xs,
     marginBottom: spacing.sm,
   },
@@ -386,7 +386,7 @@ const styles = StyleSheet.create({
   mediaList: { gap: spacing.xxs },
   footer: {
     ...typography.caption,
-    color: colors.textTertiary,
+    color: colors.textSecondary,
     textAlign: 'center',
     marginTop: spacing.lg,
   },
