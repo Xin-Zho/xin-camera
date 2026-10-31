@@ -32,7 +32,8 @@
 
 | 方式 | 链接 |
 |---|---|
-| 下载 ZIP（推荐） | **[xin-camera-0.1.0.zip](https://github.com/Xin-Zho/xin-camera/archive/refs/tags/v0.1.0.zip)** |
+| 下载 ZIP（推荐，已验证可跑） | **[xin-camera-0.1.0.zip](https://github.com/Xin-Zho/xin-camera/archive/refs/tags/v0.1.0.zip)**（约 1.7 MB） |
+| 下载最新代码 | [master.zip](https://github.com/Xin-Zho/xin-camera/archive/refs/heads/master.zip)（解压出来的目录叫 `xin-camera-master`） |
 | 克隆仓库 | `git clone https://github.com/Xin-Zho/xin-camera.git` |
 
 ### 1. 准备环境
@@ -43,11 +44,11 @@
 
 ### 2. 装依赖并启动
 
-解压后会得到 `xin-camera-0.1.0/` 目录（克隆的话是 `xin-camera/`），进这个目录：
+在解压出来的那个目录里执行（ZIP 版目录名是 `xin-camera-0.1.0`，克隆版是 `xin-camera`）：
 
 ```bash
-cd xin-camera-0.1.0     # 换成你解压/克隆出来的目录名
-npm install
+cd xin-camera-0.1.0     # 换成你实际解压/克隆出来的目录名
+npm install             # 首次约 2-3 分钟，550 个包
 npx expo start
 ```
 
