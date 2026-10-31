@@ -28,6 +28,7 @@ import {
 } from '@/src/domain/visibility';
 import type { ImportCandidate, ImportPlan } from '@/src/library/importPlan';
 import { planLibraryImport } from '@/src/library/importPlan';
+import type { MediaSourcePatch } from '@/src/library/repair';
 import type { StorageIssue } from '@/src/store/storage';
 import { writeQuarantine } from '@/src/store/storage';
 import { formatDay } from '@/src/utils/datetime';
@@ -114,6 +115,11 @@ interface AppActions {
    * 要么全进、要么不进，不出现「地点建了照片没进」的中间态。
    */
   importLibraryAssets: (candidates: ImportCandidate[]) => ImportPlan;
+  /**
+   * 老存档媒体源自愈回写（src/library/repair.ts 用）。
+   * 只 patch 指定记录的 uri / thumbUri，其他字段原样保留。
+   */
+  patchMediaSources: (patches: MediaSourcePatch[]) => void;
   /** 地图归位消费完清掉，避免回来的每次渲染都再飞一次 */
   clearMapFocus: () => void;
 }
@@ -585,6 +591,23 @@ const createAppState: StateCreator<AppState & AppActions> = (set, get) => ({
       // 重置后存档是干净的；存储本身不可用则保持原样，别把这个问题也"重置"掉
       storageIssue: get().storageIssue.kind === 'unavailable' ? get().storageIssue : { kind: 'none' },
     }),
+
+  patchMediaSources: (patches) => {
+    if (patches.length === 0) return;
+    const byId = new Map(patches.map((patch) => [patch.id, patch]));
+    set({
+      media: get().media.map((item) => {
+        const patch = byId.get(item.id);
+        if (!patch) return item;
+        return {
+          ...item,
+          uri: patch.uri,
+          // 缩略图生成失败时不覆盖成 null——留着 undefined 让显示层回落到新 uri
+          thumbUri: patch.thumbUri ?? item.thumbUri ?? null,
+        };
+      }),
+    });
+  },
 
   clearMapFocus: () => set({ mapFocus: null }),
 

@@ -7,6 +7,25 @@ import { requireOptionalNativeModule } from 'expo';
 
 import { mapWithConcurrency } from './concurrency';
 import { makeRawEpoch } from './epoch';
+
+/**
+ * expo-file-system / expo-image-manipulator 也走惰性 require：
+ * 顶层静态 import 原生模块会让缺模块的宿主在启动时白屏（与 expo-media-library 同理），
+ * 而且断言桩环境解析不了这些包。类型用 `import type`（编译期擦除），运行时才取真模块。
+ */
+type FsModule = typeof import('expo-file-system');
+let fsCache: FsModule | null = null;
+function loadFs(): FsModule {
+  if (!fsCache) fsCache = require('expo-file-system') as FsModule;
+  return fsCache;
+}
+
+type ManipulatorModule = typeof import('expo-image-manipulator');
+let manipulatorCache: ManipulatorModule | null = null;
+function loadManipulator(): ManipulatorModule {
+  if (!manipulatorCache) manipulatorCache = require('expo-image-manipulator') as ManipulatorModule;
+  return manipulatorCache;
+}
 import type {
   AccessPrivileges,
   LibraryAsset,
@@ -30,6 +49,24 @@ import type {
 
 /** 每页条数。范围验证阶段故意小：一页 24 条的缩略图已经要 24 次原生调用。 */
 export const PAGE_SIZE = 24;
+
+/** 沙盒内媒体持久目录。导入的原图 / 缩略图都搬到这里，临时目录的文件系统随时会清 */
+function mediaDir(): import('expo-file-system').Directory {
+  const { Directory, Paths } = loadFs();
+  return new Directory(Paths.document, 'media');
+}
+
+function sanitizeId(id: string): string {
+  return id.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function extnameOf(filename: string | null): string | null {
+  if (!filename) return null;
+  const dot = filename.lastIndexOf('.');
+  if (dot < 0 || dot === filename.length - 1) return null;
+  const ext = filename.slice(dot + 1).toLowerCase();
+  return /^[a-z0-9]{2,5}$/.test(ext) ? ext : null;
+}
 
 /** 缩略图/定位解析的并发上限，见 concurrency.ts 的注释 */
 const ENRICH_CONCURRENCY = 3;
@@ -347,6 +384,75 @@ export async function readAssetExif(assetId: string): Promise<Record<string, unk
   const mod = loadModule();
   const exif = await new mod.Asset(assetId).getExif();
   return exif as Record<string, unknown>;
+}
+
+/**
+ * 把原稿持久化进 App 沙盒。
+ *
+ * `Asset.getUri()` 返回的是系统临时目录里的副本，iOS 清理 tmp 后路径就死了——
+ * 表现就是「图片加载慢，之后干脆不显示」。所以导入时必须当场把文件搬进
+ * documentDirectory，拿到一个长期有效的 uri。拿不到返回 null（同 resolveUri 的宽容语义）。
+ */
+export async function persistOriginal(assetId: string, filename: string | null): Promise<string | null> {
+  try {
+    const mod = loadModule();
+    const { File } = loadFs();
+    const tmpUri = await new mod.Asset(assetId).getUri();
+    if (!tmpUri) return null;
+
+    const dir = mediaDir();
+    if (!dir.exists) dir.create({ intermediates: true, idempotent: true });
+
+    const ext = extnameOf(filename) ?? 'jpg';
+    const dest = new File(dir, `${sanitizeId(assetId)}.${ext}`);
+    if (dest.exists) return dest.uri; // 同一资产重复导入：已有副本直接复用
+
+    await new File(tmpUri).copy(dest);
+    return dest.uri;
+  } catch {
+    return null;
+  }
+}
+
+/** 缩略图目标宽度。三列瓦片、封面、卡片最大也就 ~400pt，600px 留足 2x 余量 */
+const THUMB_WIDTH = 600;
+
+/** 老存档自愈后的媒体源。thumbUri 可能为 null（缩略图生成失败，但持久化原图已到手） */
+export interface PersistedSources {
+  uri: string;
+  thumbUri: string | null;
+}
+
+/**
+ * 为 M16 之前导入的媒体补持久化副本 + 缩略图（自愈迁移）。
+ *
+ * 老记录的 `uri` 是临时目录副本，iOS 清理后就是死路径——表现是「一部分照片
+ * 等很久也显示不出来」。存档里存了 `libraryAssetId`，照片还在系统相册就能
+ * 按它重新取原稿、复制进沙盒、生成缩略图。persistOriginal 幂等：已有副本直接复用。
+ */
+export async function repairPersistedSources(assetId: string): Promise<PersistedSources | null> {
+  const uri = await persistOriginal(assetId, null);
+  if (!uri) return null;
+  const thumbUri = await makeThumb(uri);
+  return { uri, thumbUri };
+}
+
+/**
+ * 由持久化后的原图生成缩略图。视频或损坏文件会失败——返回 null，
+ * 调用方回落到原 uri（原 uri 都没有时展示占位，页面已有兜底）。
+ */
+export async function makeThumb(uri: string): Promise<string | null> {
+  try {
+    const { manipulateAsync, SaveFormat } = loadManipulator();
+    const result = await manipulateAsync(
+      uri,
+      [{ resize: { width: THUMB_WIDTH } }],
+      { compress: 0.8, format: SaveFormat.JPEG },
+    );
+    return result.uri ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** 判断资产是否在 iCloud 上（未下载），用于解释为什么缩略图很慢 */

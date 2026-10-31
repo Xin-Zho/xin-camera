@@ -8,7 +8,7 @@ export { mockMedia, mockMediaById } from './mockMedia';
 export { mockPlaces, mockPlacesById } from './mockPlaces';
 export { mockVisits, mockVisitsById } from './mockVisits';
 export { mockStories, mockStoriesById } from './mockStories';
-export { resolveMediaSource } from './mediaSource';
+export { resolveMediaSource, resolveDisplaySource } from './mediaSource';
 
 /**
  * mock 数据自检。只在开发期调用（__DEV__），不阻塞生产。

@@ -26,6 +26,13 @@ export interface MediaAsset {
    * 导入的真实照片是 `file://…`，此时直接交给 Image。
    */
   uri: string;
+  /**
+   * 缩略图 uri（约 600px，导入时由原图生成、存在 App 沙盒内）。
+   * 列表 / 瓦片 / 封面一律优先用它——原图直出既慢又是临时文件，随时会失效。
+   * 查看大图（阅读页整宽图、未来的查看器）才回落到 `uri`。
+   * 示例数据没有这层，为 undefined 时走 `uri` 即可。
+   */
+  thumbUri?: string | null;
   kind: MediaKind;
   /** ISO 8601 */
   capturedAt: string;

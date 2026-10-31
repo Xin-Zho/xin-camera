@@ -1,5 +1,7 @@
 import type { ImageSourcePropType } from 'react-native';
 
+import type { MediaAsset } from '@/src/domain/types';
+
 /**
  * 媒体资源解析层。
  *
@@ -49,4 +51,17 @@ export function resolveMediaSource(uri: string): ImageSourcePropType | undefined
 /** 供数据自检使用 */
 export function knownMediaKeys(): string[] {
   return Object.keys(SOURCES);
+}
+
+/**
+ * 显示用图源选择规则：有缩略图就用缩略图。
+ * 列表、瓦片、封面全走这里——原图直出既慢又随时会失效（临时目录被清），
+ * 缩略图是导入时生成在沙盒里的 600px 副本，秒开且稳定。
+ * 查看大图（阅读页整宽图、未来的照片查看器）仍直接用 `uri`。
+ */
+export function resolveDisplaySource(
+  media: Pick<MediaAsset, 'uri' | 'thumbUri'>,
+): ImageSourcePropType | undefined {
+  if (media.thumbUri) return resolveMediaSource(media.thumbUri);
+  return resolveMediaSource(media.uri);
 }

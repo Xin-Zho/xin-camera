@@ -47,6 +47,11 @@ export interface ImportCandidate {
   height: number | null;
   /** 真实文件 uri。取不到时为空串，媒体仍然入库（列表会显示占位），不因此丢照片 */
   uri: string;
+  /**
+   * 沙盒内缩略图 uri（约 600px）。列表 / 封面优先显示它；
+   * 生成失败时为 null，回落到 `uri`（宁慢不丢）。
+   */
+  thumbUri?: string | null;
   /** 拍摄的绝对时刻 */
   capturedMs: number;
   /** 导入时固定下来的归属日（YYYY-MM-DD） */
@@ -482,6 +487,7 @@ function buildMedia(
   return {
     id: mediaId,
     uri: candidate.uri,
+    thumbUri: candidate.thumbUri ?? null,
     kind: 'photo',
     capturedAt: isoWithOffset(candidate.capturedMs, candidate.offsetMinutes),
     placeId,
