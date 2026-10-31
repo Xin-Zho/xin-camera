@@ -13,9 +13,10 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { resolveMediaSource } from '@/src/data';
+import { resolveDisplaySource } from '@/src/data';
 import type { MediaAsset } from '@/src/domain/types';
 import { hideReasonOf } from '@/src/domain/visibility';
+import PhotoViewer from '@/src/components/viewer/PhotoViewer';
 import {
   selectMediaOfVisit,
   selectPlaceById,
@@ -32,7 +33,9 @@ import {
 } from '@/src/utils/datetime';
 
 const COLUMNS = 3;
-const GAP = 3;
+// 参照 Ente 照片墙（galleryGridSpacing = 1）与系统相册：近无缝间距让照片当主角，
+// 3 列格子不再各自成「卡片」
+const GAP = 2;
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const TILE = Math.floor((SCREEN_WIDTH - layout.screenPadding * 2 - GAP * (COLUMNS - 1)) / COLUMNS);
 
@@ -71,6 +74,8 @@ export default function VisitGalleryScreen() {
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [showRemoved, setShowRemoved] = useState(false);
+  /** 非选择态点瓦片 → 全屏查看器。null = 关闭 */
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
 
   /**
    * 这次到访对应的那本故事（规格 §7.2：一次到访一本）。
@@ -173,7 +178,7 @@ export default function VisitGalleryScreen() {
               {removedItems.map((item) => (
                 <View key={item.id} style={[styles.tile, { width: TILE, height: TILE }]}>
                   <Image
-                    source={resolveMediaSource(item.uri)}
+                    source={resolveDisplaySource(item)}
                     style={[styles.tileImage, styles.removedImage]}
                     resizeMode="cover"
                   />
@@ -259,12 +264,12 @@ export default function VisitGalleryScreen() {
             </Text>
           ) : undefined
         }
-        renderItem={({ item }) => (
+        renderItem={({ item, index }) => (
           <GalleryTile
             item={item}
             selectable={selecting}
             selected={selectedIds.includes(item.id)}
-            onPress={() => (selecting ? toggleSelect(item.id) : undefined)}
+            onPress={() => (selecting ? toggleSelect(item.id) : setViewerIndex(index))}
             onLongPress={() => (selecting ? toggleSelect(item.id) : enterSelection(item.id))}
           />
         )}
@@ -295,6 +300,15 @@ export default function VisitGalleryScreen() {
           </Pressable>
         </View>
       ) : null}
+
+      {/* 查看器是全屏 Modal，挂在这一层即可；父组件条件卸载即关闭 */}
+      {viewerIndex !== null && items.length > 0 ? (
+        <PhotoViewer
+          items={items}
+          initialIndex={Math.min(viewerIndex, items.length - 1)}
+          onClose={() => setViewerIndex(null)}
+        />
+      ) : null}
     </View>
   );
 }
@@ -312,7 +326,7 @@ function GalleryTile({
   onPress: () => void;
   onLongPress: () => void;
 }) {
-  const source = resolveMediaSource(item.uri);
+  const source = resolveDisplaySource(item);
   const isPortrait = item.height > item.width;
   return (
     <Pressable
@@ -377,9 +391,11 @@ const styles = StyleSheet.create({
   meta: { ...typography.footnote, color: colors.textSecondary },
   selectToggle: { ...typography.callout, color: colors.accent, fontWeight: '600' },
   sectionLabel: {
-    ...typography.caption2,
+    // 参照 Ente 分组头（14/w500）：11px 全大写式小字在中文里信息量偏弱，
+    // 升到 footnote 一档，历史日期弱化靠颜色不靠字号
+    ...typography.footnote,
+    fontWeight: '600',
     color: colors.textSecondary,
-    letterSpacing: 0.8,
     marginBottom: spacing.sm,
   },
   storyLink: {
@@ -398,7 +414,7 @@ const styles = StyleSheet.create({
   storyLinkText: { ...typography.footnote, color: colors.accent, flex: 1 },
   storyLinkChevron: { ...typography.callout, color: colors.accent },
   tile: {
-    borderRadius: radius.sm,
+    borderRadius: radius.xxs,
     borderCurve: 'continuous',
     overflow: 'hidden',
     backgroundColor: colors.mediaPlaceholder,
@@ -411,7 +427,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     borderWidth: 2,
     borderColor: colors.accent,
-    borderRadius: radius.sm,
+    borderRadius: radius.xxs,
   },
   tileImage: { width: '100%', height: '100%' },
   tileFallback: { flex: 1, backgroundColor: colors.mediaPlaceholder },
