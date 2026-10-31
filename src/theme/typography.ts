@@ -21,7 +21,10 @@ export const typography: Record<
 
 /** 杂志排版用的衬线/标题感，仅故事阅读页使用 */
 export const editorialTypography: Record<'storyTitle' | 'sectionTitle' | 'body', TextStyle> = {
-  storyTitle: { fontSize: 30, lineHeight: 38, fontWeight: '700', letterSpacing: 0.4 },
+  // 故事标题的宋体（iOS 内置 Songti SC）由阅读页在渲染处用 Platform.select 注入：
+  // 这里是纯数据模块，不能引入 react-native 的运行时导出，
+  // 否则 m13 这类纯函数断言链会把 react-native 整个拖进来。
+  storyTitle: { fontSize: 30, lineHeight: 40, fontWeight: '700', letterSpacing: 0.5 },
   sectionTitle: { fontSize: 15, lineHeight: 20, fontWeight: '600', letterSpacing: 1.2 },
   body: { fontSize: 16, lineHeight: 25, fontWeight: '400' },
 };

@@ -66,13 +66,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs,
   },
   segmentActive: {
-    backgroundColor: colors.surface,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 1,
+    // FluxTie/MD3：激活段用 primaryContainer 底色区分，不用投影
+    backgroundColor: colors.accentContainer,
   },
   label: { ...typography.footnote, color: colors.textSecondary },
-  labelActive: { color: colors.textPrimary, fontWeight: '600' },
+  labelActive: { color: colors.onAccentContainer, fontWeight: '600' },
 });

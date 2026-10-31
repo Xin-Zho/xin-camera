@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { resolveMediaSource } from '@/src/data';
+import { resolveDisplaySource } from '@/src/data';
 import type { MapCluster } from '@/src/domain/clustering';
 import type { PlaceSummary } from '@/src/domain/types';
 import { colors, radius, spacing, typography } from '@/src/theme';
@@ -63,7 +63,7 @@ export function PlacePickerSheet({ cluster, onSelect, onClose }: Props) {
 }
 
 function PlaceRow({ summary, onPress }: { summary: PlaceSummary; onPress: () => void }) {
-  const source = summary.coverMedia ? resolveMediaSource(summary.coverMedia.uri) : undefined;
+  const source = summary.coverMedia ? resolveDisplaySource(summary.coverMedia) : undefined;
   const latest = summary.latestVisit;
   return (
     <Pressable

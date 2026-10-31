@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { resolveMediaSource } from '@/src/data';
+import { resolveDisplaySource } from '@/src/data';
 import type { MediaAsset } from '@/src/domain/types';
 import { selectRemovedMedia, selectVisibility } from '@/src/store/selectors';
 import { useAppStore } from '@/src/store/appStore';
@@ -149,7 +149,7 @@ function RemovedTile({
   return (
     <View style={[styles.tile, { width: TILE, height: TILE }]}>
       <Image
-        source={resolveMediaSource(item.uri)}
+        source={resolveDisplaySource(item)}
         style={styles.tileImage}
         resizeMode="cover"
       />

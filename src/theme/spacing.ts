@@ -15,10 +15,14 @@ export const spacing = {
 
 export const radius = {
   none: 0,
+  /** 照片墙网格专用：Ente/系统相册都用近无缝小圆角（参照 gallery_file_widget.dart 的 1px） */
+  xxs: 2,
   sm: 4,
   md: 8,
   lg: 12,
   xl: 18,
+  /** FluxTie/MD3 卡片档位：20 + hairline 描边代替阴影 */
+  card: 20,
   /** 图片常用 */
   media: 10,
   pill: 999,

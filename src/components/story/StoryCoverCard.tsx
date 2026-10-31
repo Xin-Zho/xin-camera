@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SymbolView } from 'expo-symbols';
 
-import { resolveMediaSource } from '@/src/data';
+import { resolveDisplaySource } from '@/src/data';
 import type { MediaAsset, Place, Story } from '@/src/domain/types';
 import {
   type MediaVisibility,
@@ -82,12 +82,12 @@ export function StoryCoverCard({
       onPress={onPress}
       onLongPress={onLongPress}
       delayLongPress={320}
-      style={styles.card}
+      style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
       disabled={!onPress && !onLongPress}
       accessibilityLabel={selectable ? `${story.title}${selected ? '，已选中' : ''}` : story.title}>
       <View style={[styles.mediaWrap, selected && styles.mediaWrapSelected]}>
         {cover ? (
-          <Image source={resolveMediaSource(cover.uri)} style={styles.image} resizeMode="cover" />
+          <Image source={resolveDisplaySource(cover)} style={styles.image} resizeMode="cover" />
         ) : (
           // 封面被移除（或这本故事的照片都移除了）时不能留一块空白灰：
           // 用户分不清是图挂了还是自己移除过
@@ -152,10 +152,16 @@ const styles = StyleSheet.create({
   card: {
     marginBottom: spacing.xxl,
   },
+  // FluxTie/MD3 触感：按压整卡轻微缩放，不用降透明度
+  cardPressed: { transform: [{ scale: 0.98 }] },
   mediaWrap: {
     width: '100%',
     aspectRatio: 3 / 4,
-    borderRadius: radius.media,
+    // FluxTie：大圆角照片卡靠 hairline 与灰底区分，不叠投影
+    borderRadius: radius.card,
+    borderCurve: 'continuous',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separator,
     overflow: 'hidden',
     backgroundColor: colors.mediaPlaceholder,
   },
@@ -218,7 +224,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xxs,
     gap: spacing.xxs,
   },
-  belowTitle: { ...typography.title2, color: colors.textPrimary },
+  belowTitle: { ...typography.headline, color: colors.textPrimary },
   belowMeta: { ...typography.footnote, color: colors.textSecondary },
   mergeBadge: {
     position: 'absolute',

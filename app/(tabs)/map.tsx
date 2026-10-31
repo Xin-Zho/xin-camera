@@ -17,7 +17,7 @@ import { ClusterMarker } from '@/src/components/map/ClusterMarker';
 import { PlaceMarker } from '@/src/components/map/PlaceMarker';
 import { PlacePickerSheet } from '@/src/components/map/PlacePickerSheet';
 import { TimelineRail } from '@/src/components/timeline/TimelineRail';
-import { resolveMediaSource } from '@/src/data';
+import { resolveDisplaySource, resolveMediaSource } from '@/src/data';
 import {
   clusterContainsPlace,
   clusterPlaceSummaries,
@@ -300,7 +300,7 @@ export default function MapScreen() {
                 placeId={summary.place.id}
                 latitude={summary.place.coordinate.latitude}
                 longitude={summary.place.coordinate.longitude}
-                coverUri={summary.coverMedia?.uri}
+                coverUri={summary.coverMedia?.thumbUri ?? summary.coverMedia?.uri}
                 visitCount={summary.visitCountInRange}
                 dimmed={summary.visitCountInRange === 0}
                 selected={selectedPlaceId === summary.place.id}
@@ -358,7 +358,7 @@ export default function MapScreen() {
           style={({ pressed }) => [
             styles.placeCard,
             pressed && styles.pressedCard,
-            { bottom: spacing.sm },
+            { bottom: insets.bottom + 76 },
           ]}
           accessibilityRole="button"
           accessibilityHint="打开该地点的到访列表"
@@ -371,7 +371,7 @@ export default function MapScreen() {
           <Image
             source={
               selectedSummary.coverMedia
-                ? resolveMediaSource(selectedSummary.coverMedia.uri)
+                ? resolveDisplaySource(selectedSummary.coverMedia)
                 : undefined
             }
             style={styles.placeCardImage}
@@ -405,7 +405,7 @@ export default function MapScreen() {
         再加一次会让卡片凭空浮高，也正是卡片会压住时间轴下段的原因。
       */}
       {ticks.length === 0 ? (
-        <View style={[styles.emptyPanel, { bottom: spacing.sm }]}>
+        <View style={[styles.emptyPanel, { bottom: insets.bottom + 76 }]}>
           <Text style={styles.emptyTitle}>这里还没有回忆</Text>
           <Text style={styles.emptyText}>
             {visibility.counts.total} 张照片都不再显示。故事页的「已删除」可以恢复故事，
@@ -413,7 +413,7 @@ export default function MapScreen() {
           </Text>
         </View>
       ) : selectedSummary ? null : (
-        <View style={[styles.legend, { bottom: spacing.sm }]}>
+        <View style={[styles.legend, { bottom: insets.bottom + 76 }]}>
           <View style={styles.legendPill}>
             <Text style={styles.legendText}>缩小看合并 · 拖动右侧时间轴浏览回忆</Text>
           </View>
@@ -443,10 +443,7 @@ const styles = StyleSheet.create({
     borderColor: colors.separator,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 3 },
+    // FluxTie/MD3：控件靠 hairline 定形，不叠投影
   },
   /**
    * 按压反馈：用轻微缩放而不是降透明度——
@@ -463,15 +460,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.md,
     padding: spacing.md,
-    borderRadius: radius.xl,
+    borderRadius: radius.card,
     borderCurve: 'continuous',
     backgroundColor: colors.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.separator,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 6 },
   },
   placeCardImage: {
     width: 54,
@@ -503,15 +496,11 @@ const styles = StyleSheet.create({
     right: spacing.lg,
     gap: spacing.xs,
     padding: spacing.lg,
-    borderRadius: radius.xl,
+    borderRadius: radius.card,
     borderCurve: 'continuous',
     backgroundColor: colors.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.separator,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 6 },
   },
   emptyTitle: { ...typography.headline, color: colors.textPrimary },
   emptyText: { ...typography.footnote, color: colors.textSecondary, lineHeight: 19 },

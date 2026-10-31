@@ -88,9 +88,9 @@ export default function StoriesScreen() {
         style={styles.root}
         contentContainerStyle={{
           paddingTop: insets.top + spacing.lg,
-          // 底部不再叠加 insets.bottom：底部 tab bar 已经占掉安全区，
-          // 操作条（绝对定位在屏幕内容底部）也贴在它上面。
-          paddingBottom: selecting ? 148 : spacing.huge,
+          // 悬浮 Dock 占掉底部约 100pt（胶囊 bottom=insets.bottom+10，高 62），
+          // 内容和操作条都要避开它。
+          paddingBottom: selecting ? 172 : insets.bottom + 84,
           paddingHorizontal: layout.screenPadding,
         }}
         showsVerticalScrollIndicator={false}>
@@ -207,7 +207,7 @@ export default function StoriesScreen() {
       </ScrollView>
 
       {selecting ? (
-        <View style={[styles.actionBar, { paddingBottom: spacing.md }]}>
+        <View style={[styles.actionBar, { bottom: insets.bottom + 76, paddingBottom: spacing.md }]}>
           <Text style={[styles.actionHint, hint ? styles.actionHintError : null]}>
             {hint ??
               (canMerge
@@ -258,14 +258,15 @@ const styles = StyleSheet.create({
   selectToggle: { ...typography.callout, color: colors.accent, fontWeight: '600' },
   screenSub: {
     ...typography.footnote,
-    color: colors.textTertiary,
+    // HIG：13pt 文本 ≥4.5:1，textTertiary（约 2.7:1）不够，与 P2 已修的三页同一口径
+    color: colors.textSecondary,
     marginTop: spacing.xs,
     marginBottom: spacing.xxl,
   },
   group: { marginBottom: spacing.sm },
   groupHeader: {
     ...typography.caption2,
-    color: colors.textTertiary,
+    color: colors.textSecondary,
     letterSpacing: 0.8,
     marginBottom: spacing.md,
   },
@@ -279,7 +280,7 @@ const styles = StyleSheet.create({
     borderTopColor: colors.separator,
     gap: spacing.md,
   },
-  deletedToggle: { ...typography.footnote, color: colors.textTertiary },
+  deletedToggle: { ...typography.footnote, color: colors.textSecondary },
   deletedRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -290,7 +291,7 @@ const styles = StyleSheet.create({
   },
   deletedInfo: { flex: 1, gap: 2 },
   deletedTitle: { ...typography.callout, color: colors.textSecondary },
-  deletedMeta: { ...typography.caption, color: colors.textTertiary },
+  deletedMeta: { ...typography.caption, color: colors.textSecondary },
   restoreText: { ...typography.callout, color: colors.accent },
   actionBar: {
     position: 'absolute',
@@ -304,7 +305,7 @@ const styles = StyleSheet.create({
     borderTopColor: colors.separator,
     backgroundColor: colors.surface,
   },
-  actionHint: { ...typography.caption, color: colors.textTertiary, textAlign: 'center' },
+  actionHint: { ...typography.caption, color: colors.textSecondary, textAlign: 'center' },
   actionHintError: { color: colors.danger },
   actionRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   secondaryButton: {

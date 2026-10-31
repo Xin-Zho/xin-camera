@@ -2,7 +2,7 @@ import { SymbolView } from 'expo-symbols';
 import { memo } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { resolveMediaSource } from '@/src/data';
+import { resolveDisplaySource } from '@/src/data';
 import type { MediaAsset } from '@/src/domain/types';
 import { colors, radius, spacing, typography } from '@/src/theme';
 import { formatClock } from '@/src/utils/datetime';
@@ -51,7 +51,7 @@ export const MediaEditorRow = memo(function MediaEditorRow({
 }: Props) {
   const canUp = index > 0;
   const canDown = index < total - 1;
-  const source = resolveMediaSource(media.uri);
+  const source = resolveDisplaySource(media);
 
   return (
     <Pressable

@@ -22,6 +22,8 @@ import {
   PAGE_SIZE,
   checkAvailability,
   enrichPage,
+  makeThumb,
+  persistOriginal,
   presentLimitedPicker,
   readAssetExif,
   readPage,
@@ -310,9 +312,14 @@ export default function LibraryScreen() {
             continue;
           }
 
-          // 缩略图已经有了就用它，省一次原图导出；没有才单独取 uri
+          // 原图先搬进沙盒：`getUri()` 的临时副本会被系统清掉，直接存是
+          // 「图片加载慢、后来干脆不显示」的根因。搬不动才退回旧的宽容链路。
+          // 缩略图由持久原图生成——导入慢一点，换之后所有页面秒开。
+          const persisted = await persistOriginal(asset.id, asset.filename);
           const uri =
-            asset.thumb.kind === 'ready' ? asset.thumb.uri : ((await resolveUri(asset.id)) ?? '');
+            persisted ??
+            (asset.thumb.kind === 'ready' ? asset.thumb.uri : ((await resolveUri(asset.id)) ?? ''));
+          const thumbUri = persisted ? await makeThumb(persisted) : null;
 
           candidates.push({
             libraryAssetId: asset.id,
@@ -320,6 +327,7 @@ export default function LibraryScreen() {
             width: asset.width,
             height: asset.height,
             uri,
+            thumbUri,
             capturedMs: epochMs,
             dateKey: resolution.dateKey,
             dateSource: resolution.source,

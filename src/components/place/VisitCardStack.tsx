@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 
-import { resolveMediaSource } from '@/src/data';
+import { resolveDisplaySource } from '@/src/data';
 import type { MediaAsset, Place, Visit } from '@/src/domain/types';
 import {
   type MediaVisibility,
@@ -90,7 +90,7 @@ export function VisitCardStack({ place, visits, media, visibility, onOpenVisit }
           mediaIndex,
           visibility,
         );
-        const source = cover ? resolveMediaSource(cover.uri) : undefined;
+        const source = cover ? resolveDisplaySource(cover) : undefined;
         const visibleIds = visit.mediaIds.filter((id) => visibility.visibleIds.has(id));
         const videoCount = visibleIds.filter((id) => mediaIndex.get(id)?.kind === 'video').length;
         const isActive = depth === 0;
@@ -149,12 +149,6 @@ export function VisitCardStack({ place, visits, media, visibility, onOpenVisit }
                 </Text>
               </View>
             ) : null}
-
-            {isActive ? (
-              <View style={styles.openHint} pointerEvents="none">
-                <Text style={styles.openHintText}>轻点进入图库</Text>
-              </View>
-            ) : null}
           </Pressable>
         );
       })}
@@ -162,7 +156,7 @@ export function VisitCardStack({ place, visits, media, visibility, onOpenVisit }
       {visits.length > 1 ? (
         <View style={styles.pagerHint} pointerEvents="none">
           <Text style={styles.pagerHintText}>
-            {active + 1} / {visits.length} 次到访 · 左右滑动切换
+            {active + 1} / {visits.length}
           </Text>
         </View>
       ) : null}
@@ -180,14 +174,13 @@ const styles = StyleSheet.create({
     position: 'absolute',
     width: CARD_WIDTH,
     height: CARD_HEIGHT,
-    borderRadius: radius.xl,
+    // FluxTie：大圆角 + hairline 定形，不用投影（灰底与照片本身对比已足够）
+    borderRadius: radius.card,
     borderCurve: 'continuous',
     overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.separator,
     backgroundColor: colors.mediaPlaceholder,
-    shadowColor: '#000',
-    shadowOpacity: 0.16,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
   },
   // 按压反馈用轻缩放：大元素不能缩太狠，也不能用 opacity（照片会变灰）
   cardPressed: { transform: [{ translateY: 0 }, { scale: 0.98 }] },
@@ -213,19 +206,6 @@ const styles = StyleSheet.create({
   cardPlace: { ...typography.title2, color: colors.textOnMedia },
   cardDate: { ...typography.callout, color: 'rgba(255,255,255,0.92)' },
   cardMeta: { ...typography.footnote, color: 'rgba(255,255,255,0.78)' },
-  openHint: {
-    position: 'absolute',
-    top: spacing.lg,
-    right: spacing.lg,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surfaceTranslucent,
-    // 与地图页白色控件同一套定形语言
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.separator,
-  },
-  openHintText: { ...typography.caption2, color: colors.textPrimary },
   pagerHint: {
     position: 'absolute',
     bottom: 0,
