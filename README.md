@@ -7,6 +7,8 @@
 - **形态**：iPhone 优先的可交互原型，Windows 上开发，真机用 Expo Go 预览
 - **数据**：全部本地。相册**只读**，照片不进任何服务器；**没有后端、没有账号、没有云同步、没有 AI 调用**
 
+> **想直接跑起来看效果？** → [下载 ZIP](https://github.com/Xin-Zho/xin-camera/archive/refs/tags/v0.1.0.zip)，解压后 `npm install && npx expo start`，手机扫码即可。详见[下载与运行](#下载与运行)。
+
 <p align="left">
   <img alt="platform" src="https://img.shields.io/badge/platform-iOS%20(Expo%20Go)-blue" />
   <img alt="sdk" src="https://img.shields.io/badge/Expo-SDK%2058-000" />
@@ -15,7 +17,7 @@
 
 ## 目录
 
-- [跑起来](#跑起来)
+- [下载与运行](#下载与运行)
 - [功能一览](#功能一览)
 - [视觉体系](#视觉体系)
 - [架构与目录](#架构与目录)
@@ -24,19 +26,52 @@
 - [已知限制](#已知限制)
 - [文档](#文档)
 
-## 跑起来
+## 下载与运行
 
-```powershell
-cd D:\xin-camera
+**只想把它跑起来、不打算改代码** → 直接下载压缩包，解压后按下面第 3 步走：
+
+| 方式 | 链接 |
+|---|---|
+| 下载 ZIP（推荐） | **[xin-camera-0.1.0.zip](https://github.com/Xin-Zho/xin-camera/archive/refs/tags/v0.1.0.zip)** |
+| 克隆仓库 | `git clone https://github.com/Xin-Zho/xin-camera.git` |
+
+### 1. 准备环境
+
+- **Node.js 20 LTS 或更高**（`node -v` 确认；项目没有原生模块，不需要 Xcode / Android Studio）
+- 手机装 **Expo Go**（App Store / 应用商店搜「Expo Go」）
+- 电脑和手机连**同一个 Wi-Fi**
+
+### 2. 装依赖并启动
+
+解压后会得到 `xin-camera-0.1.0/` 目录（克隆的话是 `xin-camera/`），进这个目录：
+
+```bash
+cd xin-camera-0.1.0     # 换成你解压/克隆出来的目录名
 npm install
 npx expo start
 ```
 
-iPhone 与电脑连同一个 Wi-Fi，用 Expo Go 扫终端二维码；扫不到就把终端里 `exp://<局域网 IP>:8081` 手输进 Expo Go。
+### 3. 在手机上打开
 
-> 本项目是 **Expo SDK 58**，手机上的 Expo Go 必须支持同一 SDK，否则会提示版本不兼容。
-> Web 端只验证过打包（`npx expo export`），**地图在 Web 上不可用**（react-native-maps 无 Web 实现），
-> 且当前 `react-native-web 0.21.4` 与 gesture-handler 存在 `codegenNativeComponent` 兼容问题，网页渲染不做承诺。
+终端里会出现一个二维码：
+
+- **iPhone** → 用系统相机扫（或 Expo Go 里的扫码），会问是否在 Expo Go 中打开
+- **Android** → 用 Expo Go 里的「Scan QR code」
+
+扫码打不开时，把终端里那行 `exp://192.168.x.x:8081`（或 `http://192.168.x.x:8081`）手输进 Expo Go 的地址栏。默认示例数据会直接出现，不需要导入任何照片。
+
+### 常见问题
+
+| 现象 | 原因 / 处理 |
+|---|---|
+| Expo Go 提示 SDK 版本不兼容 | 本项目是 **SDK 58**，把手机上的 Expo Go 更新到最新版 |
+| 手机连不上、一直转圈 | 电脑和手机不在同一网段（公司网 / 访客网常见）；或电脑开着 VPN，把 8081 端口占到了虚拟网卡上，临时关掉 VPN 再启动 |
+| 防火墙拦截 | Windows 会弹「是否允许 Node.js 访问网络」，勾选专用网络并允许 |
+| `npm install` 中途失败 | Node 版本低于 20；或网络问题，重跑一次即可（无原生编译步骤） |
+| 想在浏览器里看 | **不行**。地图依赖 `react-native-maps`，无 Web 实现；`react-native-web 0.21.4` 与 gesture-handler 还有 `codegenNativeComponent` 兼容问题。Web 只验证过打包，不承诺渲染 |
+
+> 首次启动需要打包，冷启动大约 20–60 秒；之后再进就快了。
+> 所有数据都存在手机本地，**没有任何后端、账号或网络请求**，卸载 App 即清空。
 
 ## 功能一览
 

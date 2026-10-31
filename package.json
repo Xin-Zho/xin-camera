@@ -38,5 +38,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web"
   },
+  "engines": {
+    "node": ">=20"
+  },
   "private": true
 }
